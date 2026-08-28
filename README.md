@@ -4,7 +4,7 @@ Ung dung web cuc bo de tai audio len ElevenLabs Speech-to-Text, hien transcript 
 
 ## Chay ung dung
 
-Yeu cau Node.js 20 tro len.
+Yeu cau Node.js 22 tro len. Supabase Realtime hien can native WebSocket co san tu Node 22.
 
 ```powershell
 npm run dev
