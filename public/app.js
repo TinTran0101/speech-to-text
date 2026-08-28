@@ -1,7 +1,9 @@
 const elements = {
   apiKey: document.querySelector("#api-key"),
+  audioLibraryList: document.querySelector("#audio-library-list"),
   audio: document.querySelector("#audio-player"),
   currentTime: document.querySelector("#current-time"),
+  cacheStatus: document.querySelector("#cache-status"),
   downloadSrt: document.querySelector("#download-srt"),
   downloadTxt: document.querySelector("#download-txt"),
   dropZone: document.querySelector("#drop-zone"),
@@ -13,17 +15,27 @@ const elements = {
   fileName: document.querySelector("#file-name"),
   formError: document.querySelector("#form-error"),
   language: document.querySelector("#language"),
+  libraryStatus: document.querySelector("#library-status"),
   model: document.querySelector("#model"),
+  newAudioButton: document.querySelector("#new-audio-button"),
   playbackRate: document.querySelector("#playback-rate"),
   playButton: document.querySelector("#play-button"),
   processingDetail: document.querySelector("#processing-detail"),
   processingState: document.querySelector("#processing-state"),
   rememberKey: document.querySelector("#remember-key"),
+  refreshLibrary: document.querySelector("#refresh-library"),
   removeFile: document.querySelector("#remove-file"),
   resultTitle: document.querySelector("#result-title"),
   search: document.querySelector("#search-transcript"),
   selectedFile: document.querySelector("#selected-file"),
   speakerLegend: document.querySelector("#speaker-legend"),
+  japaneseStatus: document.querySelector("#japanese-status"),
+  timelineRuler: document.querySelector("#timeline-ruler"),
+  timelineSpeakers: document.querySelector("#timeline-speakers"),
+  timelineTracks: document.querySelector("#timeline-tracks"),
+  toggleReading: document.querySelector("#toggle-reading"),
+  toggleRomaji: document.querySelector("#toggle-romaji"),
+  toggleTranslation: document.querySelector("#toggle-translation"),
   toggleKey: document.querySelector("#toggle-key"),
   transcriptList: document.querySelector("#transcript-list"),
   transcriptState: document.querySelector("#transcript-state"),
@@ -99,6 +111,7 @@ function setAudioFile(file) {
   state.audioUrl = URL.createObjectURL(file);
   resetTranscript();
   elements.audio.src = state.audioUrl;
+  elements.playButton.disabled = false;
   elements.fileName.textContent = file.name;
   elements.fileMeta.textContent = `${formatBytes(file.size)} · ${file.type || "Audio"}`;
   elements.selectedFile.hidden = false;
@@ -106,6 +119,76 @@ function setAudioFile(file) {
   elements.formError.textContent = "";
   updateSubmitState();
   buildWaveform(file);
+}
+
+function formatLibraryDate(value) {
+  if (!value) return "Không rõ ngày";
+  return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" }).format(new Date(value));
+}
+
+async function loadRecordings() {
+  elements.refreshLibrary.disabled = true;
+  elements.libraryStatus.textContent = "Đang tải danh sách...";
+  try {
+    const response = await fetch("/api/recordings?limit=100");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Không thể tải thư viện.");
+    if (!result.configured) {
+      elements.libraryStatus.textContent = "Chưa cấu hình Supabase trên server.";
+      elements.audioLibraryList.innerHTML = "";
+      return;
+    }
+
+    const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+    elements.libraryStatus.textContent = recordings.length
+      ? `${recordings.length} audio đã lưu`
+      : "Chưa có audio nào được lưu.";
+    elements.audioLibraryList.innerHTML = recordings
+      .map(
+        (recording) => `
+          <button class="library-item" type="button" data-recording-id="${escapeHtml(recording.id)}">
+            <span class="library-file-icon">${recording.has_audio ? "▶" : "TXT"}</span>
+            <span class="library-file-copy">
+              <strong>${escapeHtml(recording.file_name)}</strong>
+              <small>${formatLibraryDate(recording.created_at)} · ${formatBytes(recording.file_size)}${recording.language_code ? ` · ${escapeHtml(recording.language_code.toUpperCase())}` : ""}</small>
+            </span>
+            <span class="library-arrow">›</span>
+          </button>`,
+      )
+      .join("");
+  } catch (error) {
+    elements.libraryStatus.textContent = error instanceof Error ? error.message : "Không thể tải thư viện.";
+    elements.audioLibraryList.innerHTML = "";
+  } finally {
+    elements.refreshLibrary.disabled = false;
+  }
+}
+
+async function openRecording(recordingId) {
+  elements.libraryStatus.textContent = "Đang mở bản ghi...";
+  try {
+    const response = await fetch(`/api/recordings/${encodeURIComponent(recordingId)}`);
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Không thể mở bản ghi.");
+    const recording = result.recording;
+
+    if (state.audioUrl?.startsWith("blob:")) URL.revokeObjectURL(state.audioUrl);
+    state.audioFile = null;
+    state.audioUrl = recording.audioUrl || "";
+    state.waveformSamples = Array.from({ length: 180 }, (_, index) => 0.16 + Math.abs(Math.sin(index * 0.31)) * 0.42);
+    elements.audio.src = state.audioUrl;
+    elements.playButton.disabled = !state.audioUrl;
+    renderTranscript({
+      ...recording.transcript,
+      cache: { hit: true, saved: true, recordingId: recording.id },
+    });
+    elements.resultTitle.textContent = recording.fileName || "Bản ghi đã lưu";
+    setResultView("transcript");
+    requestAnimationFrame(drawWaveform);
+    elements.libraryStatus.textContent = "Đã tải bản ghi từ Supabase.";
+  } catch (error) {
+    elements.libraryStatus.textContent = error instanceof Error ? error.message : "Không thể mở bản ghi.";
+  }
 }
 
 function clearAudioFile() {
@@ -235,7 +318,14 @@ function renderTranscript(result) {
   const speakers = [...new Set(state.segments.map((segment) => segment.speaker))];
 
   elements.speakerLegend.innerHTML = speakers
-    .map((speaker) => `<span class="speaker-chip" style="--speaker-color:${speakerColor(speaker)}"><i></i>${speakerName(speaker)}</span>`)
+    .map(
+      (speaker) => `
+        <button class="speaker-chip" type="button" style="--speaker-color:${speakerColor(speaker)}">
+          <i>${speakerName(speaker).replace("Người nói ", "")}</i>
+          <span>${speakerName(speaker)}</span>
+          <b>•••</b>
+        </button>`,
+    )
     .join("");
 
   if (!state.segments.length) {
@@ -246,28 +336,93 @@ function renderTranscript(result) {
 
   elements.transcriptList.innerHTML = state.segments
     .map((segment, segmentIndex) => {
-      const wordMarkup = segment.words
-        .map(
-          (word) =>
-            `<span class="word" data-word-index="${word.index}" data-start="${word.start}">${escapeHtml(word.text)}</span>`,
-        )
+      const japanese = result.japanese?.sentences?.find((item) => Number(item.id) === segmentIndex);
+      const originalText = segment.words.map((word) => word.text).join("").trim();
+      const phraseMarkup = japanese?.phrases
+        ?.map((phrase) => {
+          const surface = escapeHtml(phrase.surface);
+          const reading = escapeHtml(phrase.reading);
+          return `
+            <span class="reading-phrase">
+              ${phrase.hasKanji && reading ? `<ruby>${surface}<rt>${reading}</rt></ruby>` : `<span>${surface}</span>`}
+              ${phrase.romaji ? `<small class="romaji">${escapeHtml(phrase.romaji)}</small>` : ""}
+            </span>`;
+        })
         .join("");
+      const wordMarkup = segment.words
+        .map((word) => `<span class="word" data-word-index="${word.index}" data-start="${word.start}">${escapeHtml(word.text)}</span>`)
+        .join("");
+      const textMarkup = japanese
+        ? `<div class="japanese-line">${phraseMarkup || escapeHtml(originalText)}</div>`
+        : `<p class="segment-text">${wordMarkup}</p>`;
+      const translationMarkup = japanese
+        ? `<p class="translation-line ${japanese.translationVi ? "" : "is-placeholder"}" contenteditable="true" spellcheck="false">${escapeHtml(japanese.translationVi || "Thêm nghĩa tiếng Việt · cấu hình LibreTranslate để dịch tự động")}</p>`
+        : "";
       return `
         <article class="segment" data-segment-index="${segmentIndex}" style="--speaker-color:${speakerColor(segment.speaker)}">
-          <button class="speaker-label" type="button" data-start="${segment.start}">
-            ${speakerName(segment.speaker)}
-            <span class="speaker-time">${formatTime(segment.start)}</span>
+          <div class="segment-speaker">
+            <i>${speakerName(segment.speaker).replace("Người nói ", "")}</i>
+            <span>${speakerName(segment.speaker)}</span>
+          </div>
+          <button class="segment-time-rail" type="button" data-start="${segment.start}" aria-label="Phát từ ${formatTime(segment.start)}">
+            <time>${formatTime(segment.start)}</time>
+            <span></span>
+            <time>${formatTime(segment.end)}</time>
           </button>
-          <p class="segment-text">${wordMarkup}</p>
+          <div class="segment-copy">
+            ${textMarkup}
+            ${translationMarkup}
+          </div>
         </article>`;
     })
     .join("");
+
+  elements.cacheStatus.textContent = result.cache?.hit
+    ? "Đã dùng bản cache"
+    : result.cache?.saved
+      ? "Đã lưu Supabase"
+      : "Chưa bật cloud cache";
+  elements.japaneseStatus.textContent = result.japanese
+    ? result.japanese.translationEnabled
+      ? "Kanji + dịch Việt"
+      : "Kanji reading ready"
+    : "Transcript timeline";
+  renderTimeline();
 }
 
 function setResultView(view) {
   elements.emptyState.hidden = view !== "empty";
   elements.processingState.hidden = view !== "processing";
   elements.transcriptState.hidden = view !== "transcript";
+  document.body.classList.toggle("editor-mode", view === "transcript");
+}
+
+function renderTimeline() {
+  if (!state.segments.length) return;
+  const speakers = [...new Set(state.segments.map((segment) => segment.speaker))];
+  const totalDuration = Math.max(elements.audio.duration || 0, state.segments.at(-1)?.end || 1, 1);
+  const tickStep = totalDuration > 180 ? 30 : totalDuration > 60 ? 10 : 5;
+  const ticks = [];
+  for (let second = 0; second <= totalDuration; second += tickStep) {
+    ticks.push(`<span style="left:${(second / totalDuration) * 100}%"><i></i>${formatTime(second)}</span>`);
+  }
+  elements.timelineRuler.innerHTML = ticks.join("");
+  elements.timelineSpeakers.innerHTML = speakers
+    .map(
+      (speaker) => `<div class="timeline-speaker" style="--speaker-color:${speakerColor(speaker)}"><i></i>${speakerName(speaker)}</div>`,
+    )
+    .join("");
+  elements.timelineTracks.innerHTML = `${speakers
+    .map((speaker) => {
+      const blocks = state.segments
+        .filter((segment) => segment.speaker === speaker)
+        .map(
+          (segment) => `<button type="button" class="timeline-block" data-start="${segment.start}" style="left:${(segment.start / totalDuration) * 100}%;width:${Math.max(((segment.end - segment.start) / totalDuration) * 100, 0.7)}%;--speaker-color:${speakerColor(speaker)}" aria-label="${speakerName(speaker)} ${formatTime(segment.start)}"></button>`,
+        )
+        .join("");
+      return `<div class="timeline-track">${blocks}</div>`;
+    })
+    .join("")}<i id="timeline-playhead" class="timeline-playhead"></i>`;
 }
 
 function startElapsedTimer() {
@@ -313,6 +468,7 @@ async function transcribe() {
     elements.audio.src = state.audioUrl;
     setResultView("transcript");
     requestAnimationFrame(drawWaveform);
+    loadRecordings();
   } catch (error) {
     clearInterval(state.elapsedTimer);
     elements.formError.textContent = error instanceof Error ? error.message : "Đã có lỗi xảy ra.";
@@ -347,7 +503,8 @@ function updateActiveWord() {
   if (nextIndex < 0) return;
 
   const wordElement = document.querySelector(`[data-word-index="${nextIndex}"]`);
-  const segmentElement = wordElement?.closest(".segment");
+  const segmentIndex = state.segments.findIndex((segment) => segment.words.some((word) => word.index === nextIndex));
+  const segmentElement = wordElement?.closest(".segment") || document.querySelector(`[data-segment-index="${segmentIndex}"]`);
   wordElement?.classList.add("is-active");
   segmentElement?.classList.add("is-active");
 
@@ -399,6 +556,15 @@ elements.dropZone.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", () => setAudioFile(elements.fileInput.files?.[0]));
 elements.removeFile.addEventListener("click", clearAudioFile);
 elements.transcribeButton.addEventListener("click", transcribe);
+elements.refreshLibrary.addEventListener("click", loadRecordings);
+elements.audioLibraryList.addEventListener("click", (event) => {
+  const item = event.target.closest("[data-recording-id]");
+  if (item) openRecording(item.dataset.recordingId);
+});
+elements.newAudioButton.addEventListener("click", () => {
+  clearAudioFile();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
 
 for (const eventName of ["dragenter", "dragover"]) {
   elements.dropZone.addEventListener(eventName, (event) => {
@@ -423,11 +589,14 @@ elements.audio.addEventListener("pause", () => elements.playButton.classList.rem
 elements.audio.addEventListener("ended", () => elements.playButton.classList.remove("is-playing"));
 elements.audio.addEventListener("loadedmetadata", () => {
   elements.duration.textContent = formatTime(elements.audio.duration);
+  renderTimeline();
 });
 elements.audio.addEventListener("timeupdate", () => {
   elements.currentTime.textContent = formatTime(elements.audio.currentTime);
   updateActiveWord();
   drawWaveform();
+  const playhead = document.querySelector("#timeline-playhead");
+  if (playhead && elements.audio.duration) playhead.style.left = `${(elements.audio.currentTime / elements.audio.duration) * 100}%`;
 });
 elements.playbackRate.addEventListener("change", () => {
   elements.audio.playbackRate = Number(elements.playbackRate.value);
@@ -442,6 +611,24 @@ elements.transcriptList.addEventListener("click", (event) => {
   if (!target) return;
   elements.audio.currentTime = Number(target.dataset.start);
   elements.audio.play();
+});
+elements.timelineTracks.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-start]");
+  if (!target) return;
+  elements.audio.currentTime = Number(target.dataset.start);
+  elements.audio.play();
+});
+elements.toggleReading.addEventListener("click", () => {
+  elements.transcriptState.classList.toggle("hide-reading");
+  elements.toggleReading.classList.toggle("is-active");
+});
+elements.toggleRomaji.addEventListener("click", () => {
+  elements.transcriptState.classList.toggle("show-romaji");
+  elements.toggleRomaji.classList.toggle("is-active");
+});
+elements.toggleTranslation.addEventListener("click", () => {
+  elements.transcriptState.classList.toggle("hide-translation");
+  elements.toggleTranslation.classList.toggle("is-active");
 });
 elements.search.addEventListener("input", () => {
   const query = elements.search.value.trim().toLocaleLowerCase("vi");
@@ -459,3 +646,32 @@ if (savedApiKey) {
   elements.rememberKey.checked = true;
 }
 updateSubmitState();
+loadRecordings();
+
+async function loadJapaneseDemo() {
+  const demoWords = [
+    { text: "三番。", start: 0.82, end: 1.1, speaker_id: "speaker_0", type: "word" },
+    { text: "ウィンドーショッピングをしました。", start: 2.18, end: 3.88, speaker_id: "speaker_0", type: "word" },
+    { text: "どれですか？例えば。", start: 4.92, end: 8.74, speaker_id: "speaker_0", type: "word" },
+    { text: "あの傘、素敵ですね。", start: 10.36, end: 12.72, speaker_id: "speaker_1", type: "word" },
+    { text: "どれ？", start: 14.22, end: 15.52, speaker_id: "speaker_0", type: "word" },
+    { text: "あそこ。あの黒い傘。", start: 17.02, end: 20.1, speaker_id: "speaker_1", type: "word" },
+  ];
+  const sentences = demoWords.map((word, id) => ({ id, text: word.text }));
+  const response = await fetch("/api/japanese/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sentences, translate: false }),
+  });
+  const japanese = await response.json();
+  const result = { text: demoWords.map((word) => word.text).join(""), words: demoWords, language_code: "ja", japanese };
+  state.waveformSamples = Array.from({ length: 180 }, (_, index) => 0.18 + Math.abs(Math.sin(index * 0.37)) * 0.48);
+  renderTranscript(result);
+  elements.resultTitle.textContent = "Japanese conversation demo";
+  setResultView("transcript");
+  requestAnimationFrame(drawWaveform);
+}
+
+if (new URLSearchParams(window.location.search).get("demo") === "1") {
+  loadJapaneseDemo().catch((error) => console.error("Khong the tai demo:", error));
+}

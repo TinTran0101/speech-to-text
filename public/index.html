@@ -111,6 +111,20 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
           </button>
           <p id="form-error" class="form-error" role="alert"></p>
+
+          <section class="audio-library" aria-labelledby="audio-library-title">
+            <div class="audio-library-heading">
+              <div>
+                <p class="section-kicker">ĐÃ LƯU TRÊN CLOUD</p>
+                <h2 id="audio-library-title">Thư viện audio</h2>
+              </div>
+              <button id="refresh-library" type="button" aria-label="Tải lại thư viện" title="Tải lại">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.5 7M17.9 15.8A7 7 0 0 1 5.5 17"/></svg>
+              </button>
+            </div>
+            <p id="library-status" class="library-status">Đang tải danh sách...</p>
+            <div id="audio-library-list" class="audio-library-list"></div>
+          </section>
         </aside>
 
         <section class="result-panel">
@@ -137,10 +151,17 @@
           </div>
 
           <div id="transcript-state" class="transcript-state" hidden>
-            <div class="result-header">
-              <div>
-                <p class="section-kicker">TRANSCRIPT HOÀN TẤT</p>
+            <div class="editor-header">
+              <button id="new-audio-button" class="icon-text-button" type="button">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                Audio mới
+              </button>
+              <div class="editor-title">
                 <h2 id="result-title">Bản ghi âm</h2>
+                <div class="editor-badges">
+                  <span id="cache-status" class="editor-badge">Chưa lưu cloud</span>
+                  <span id="japanese-status" class="editor-badge accent">Kuromoji ready</span>
+                </div>
               </div>
               <div class="result-actions">
                 <button id="download-srt" class="secondary-button" type="button">Tải .SRT</button>
@@ -148,38 +169,69 @@
               </div>
             </div>
 
-            <div class="player-card">
-              <audio id="audio-player" preload="metadata"></audio>
-              <div class="player-controls">
-                <button id="play-button" class="play-button" type="button" aria-label="Phát audio">
-                  <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>
-                  <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
-                </button>
-                <span id="current-time" class="time-label">00:00</span>
-                <div class="waveform-wrap">
-                  <canvas id="waveform" aria-label="Dạng sóng audio"></canvas>
-                  <div id="waveform-loading" class="waveform-loading">Đang đọc dạng sóng...</div>
+            <div class="editor-body">
+              <aside class="speaker-panel">
+                <div class="speaker-panel-heading">
+                  <span>Speakers</span>
+                  <button type="button" aria-label="Thêm người nói">+</button>
                 </div>
-                <span id="duration" class="time-label">00:00</span>
-                <select id="playback-rate" class="rate-select" aria-label="Tốc độ phát">
-                  <option value="0.75">0.75×</option>
-                  <option value="1" selected>1×</option>
-                  <option value="1.25">1.25×</option>
-                  <option value="1.5">1.5×</option>
-                  <option value="2">2×</option>
-                </select>
+                <div id="speaker-legend" class="speaker-legend"></div>
+                <div class="language-helper">
+                  <strong>日本語 tools</strong>
+                  <span>Kuromoji · Wanakana</span>
+                  <small>Cách đọc được xử lý nội bộ, không tốn API.</small>
+                </div>
+              </aside>
+
+              <div class="transcript-workarea">
+                <div class="transcript-toolbar">
+                  <div class="view-switches">
+                    <button id="toggle-reading" class="tool-button is-active" type="button">ふ Cách đọc</button>
+                    <button id="toggle-romaji" class="tool-button" type="button">A Romaji</button>
+                    <button id="toggle-translation" class="tool-button is-active" type="button">VI Nghĩa Việt</button>
+                  </div>
+                  <label class="search-field">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+                    <input id="search-transcript" type="search" placeholder="Tìm trong transcript" />
+                  </label>
+                </div>
+                <div id="transcript-list" class="transcript-list" aria-live="polite"></div>
               </div>
             </div>
 
-            <div class="transcript-toolbar">
-              <div id="speaker-legend" class="speaker-legend"></div>
-              <label class="search-field">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
-                <input id="search-transcript" type="search" placeholder="Tìm trong transcript" />
-              </label>
+            <div class="timeline-dock">
+              <audio id="audio-player" preload="metadata"></audio>
+              <div class="timeline-grid">
+                <div class="timeline-label">TIMELINE</div>
+                <div id="timeline-ruler" class="timeline-ruler"></div>
+                <div id="timeline-speakers" class="timeline-speakers"></div>
+                <div id="timeline-tracks" class="timeline-tracks"></div>
+              </div>
+              <div class="transport-bar">
+                <div class="zoom-control" aria-label="Thu phóng timeline">
+                  <span>−</span><input type="range" min="1" max="4" step="0.5" value="1" /><span>＋</span>
+                </div>
+                <div class="transport-center">
+                  <span id="current-time" class="time-label">00:00</span>
+                  <button id="play-button" class="play-button" type="button" aria-label="Phát audio">
+                    <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7V5Z"/></svg>
+                    <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg>
+                  </button>
+                  <span id="duration" class="time-label">00:00</span>
+                  <select id="playback-rate" class="rate-select" aria-label="Tốc độ phát">
+                    <option value="0.75">0.75×</option>
+                    <option value="1" selected>1×</option>
+                    <option value="1.25">1.25×</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="2">2×</option>
+                  </select>
+                </div>
+                <div class="waveform-wrap compact-waveform">
+                  <canvas id="waveform" aria-label="Dạng sóng audio"></canvas>
+                  <div id="waveform-loading" class="waveform-loading">Đang đọc dạng sóng...</div>
+                </div>
+              </div>
             </div>
-
-            <div id="transcript-list" class="transcript-list" aria-live="polite"></div>
           </div>
         </section>
       </section>

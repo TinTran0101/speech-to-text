@@ -2,9 +2,19 @@ import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
+import { analyzeJapaneseSentences, looksJapanese } from "./src/japanese.mjs";
+import {
+  findCachedRecording,
+  getRecording,
+  hashAudio,
+  listRecordings,
+  saveRecording,
+  storageStatus,
+  verifyStorageConnection,
+} from "./src/storage.mjs";
 
 const PORT = Number(process.env.PORT || 4173);
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = process.env.HOST || "0.0.0.0";
 const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 const publicDirectory = fileURLToPath(new URL("./public/", import.meta.url));
 
@@ -41,6 +51,71 @@ function readRequestBody(request) {
   });
 }
 
+async function readJsonBody(request) {
+  const buffer = await readRequestBody(request);
+  if (buffer.length > 1024 * 1024) throw new Error("JSON vuot qua gioi han 1 MB.");
+  return JSON.parse(buffer.toString("utf8") || "{}");
+}
+
+function normalizeTimedWords(result) {
+  const words = [];
+  let pending = "";
+  for (const item of Array.isArray(result.words) ? result.words : []) {
+    const timed = Number.isFinite(Number(item.start)) && Number.isFinite(Number(item.end));
+    if (!timed) {
+      if (item.text?.trim() && words.length) words.at(-1).text += item.text;
+      else pending += item.text || "";
+      continue;
+    }
+    words.push({
+      start: Number(item.start),
+      end: Number(item.end),
+      speaker: item.speaker_id || words.at(-1)?.speaker || "speaker_0",
+      text: pending + (item.text || ""),
+    });
+    pending = "";
+  }
+  if (pending && words.length) words.at(-1).text += pending;
+  return words;
+}
+
+function transcriptSegments(result) {
+  const segments = [];
+  for (const word of normalizeTimedWords(result)) {
+    const current = segments.at(-1);
+    if (
+      !current ||
+      current.speaker !== word.speaker ||
+      word.start - current.end > 1.35 ||
+      word.end - current.start > 28
+    ) {
+      segments.push({
+        id: segments.length,
+        start: word.start,
+        end: word.end,
+        speaker: word.speaker,
+        text: word.text,
+      });
+    } else {
+      current.text += word.text;
+      current.end = word.end;
+    }
+  }
+  return segments;
+}
+
+async function enrichJapanese(result, languageCode) {
+  const segments = transcriptSegments(result);
+  const japanese =
+    languageCode === "ja" || result.language_code === "ja" || segments.some((item) => looksJapanese(item.text));
+  if (!japanese || !segments.length) return result;
+
+  result.japanese = await analyzeJapaneseSentences(
+    segments.map((segment) => ({ id: segment.id, text: segment.text })),
+  );
+  return result;
+}
+
 async function handleTranscription(request, response) {
   const apiKey = request.headers["x-api-key"];
   const rawFileName = request.headers["x-file-name"] || "audio-file";
@@ -67,6 +142,19 @@ async function handleTranscription(request, response) {
     const formData = new FormData();
     const fileName = decodeURIComponent(String(rawFileName)).replace(/[\\/]/g, "_");
     const contentType = request.headers["content-type"] || "application/octet-stream";
+    const fileHash = hashAudio(audioBuffer);
+    const cacheKey = hashAudio(
+      Buffer.from(`${fileHash}:${modelId}:${languageCode || "auto"}:kanji-v1:${Boolean(process.env.LIBRETRANSLATE_URL)}`),
+    );
+    const cached = await findCachedRecording(cacheKey);
+
+    if (cached?.transcript_json) {
+      sendJson(response, 200, {
+        ...cached.transcript_json,
+        cache: { hit: true, recordingId: cached.id },
+      });
+      return;
+    }
 
     formData.append("file", new Blob([audioBuffer], { type: contentType }), fileName);
     formData.append("model_id", String(modelId));
@@ -101,6 +189,18 @@ async function handleTranscription(request, response) {
       return;
     }
 
+    await enrichJapanese(result, languageCode);
+    const saved = await saveRecording({
+      audioBuffer,
+      cacheKey,
+      contentType,
+      fileHash,
+      fileName,
+      languageCode: result.language_code || languageCode,
+      modelId,
+      transcript: result,
+    });
+    result.cache = { hit: false, saved: Boolean(saved), recordingId: saved?.id || null };
     sendJson(response, 200, result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Loi khong xac dinh.";
@@ -108,8 +208,57 @@ async function handleTranscription(request, response) {
   }
 }
 
+async function handleJapaneseAnalysis(request, response) {
+  try {
+    const body = await readJsonBody(request);
+    const sentences = Array.isArray(body.sentences) ? body.sentences.slice(0, 100) : [];
+    if (!sentences.length) {
+      sendJson(response, 400, { error: "Vui long gui danh sach cau tieng Nhat." });
+      return;
+    }
+    sendJson(response, 200, await analyzeJapaneseSentences(sentences, { translate: body.translate !== false }));
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : "JSON khong hop le." });
+  }
+}
+
+async function handleRecordingList(request, response) {
+  const status = storageStatus();
+  if (!status.configured) {
+    sendJson(response, 200, { configured: false, recordings: [] });
+    return;
+  }
+
+  try {
+    const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
+    const recordings = await listRecordings(requestUrl.searchParams.get("limit") || 100);
+    sendJson(response, 200, { configured: true, recordings });
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : "Khong the tai thu vien." });
+  }
+}
+
+async function handleRecordingDetail(recordingId, response) {
+  if (!storageStatus().configured) {
+    sendJson(response, 503, { error: "Supabase chua duoc cau hinh." });
+    return;
+  }
+
+  try {
+    const recording = await getRecording(recordingId);
+    if (!recording) {
+      sendJson(response, 404, { error: "Khong tim thay ban ghi." });
+      return;
+    }
+    sendJson(response, 200, { recording });
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : "Khong the tai ban ghi." });
+  }
+}
+
 function serveStaticFile(request, response) {
-  const requestPath = request.url === "/" ? "/index.html" : request.url.split("?")[0];
+  const pathname = request.url.split("?")[0];
+  const requestPath = pathname === "/" ? "/index.html" : pathname;
   const relativePath = normalize(decodeURIComponent(requestPath)).replace(/^(\.\.[/\\])+/, "");
   const filePath = join(publicDirectory, relativePath);
 
@@ -128,6 +277,40 @@ function serveStaticFile(request, response) {
 const server = createServer(async (request, response) => {
   if (request.method === "POST" && request.url === "/api/transcribe") {
     await handleTranscription(request, response);
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/japanese/analyze") {
+    await handleJapaneseAnalysis(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/api/status") {
+    const storage = storageStatus();
+    sendJson(response, 200, {
+      ok: true,
+      storage: {
+        ...storage,
+        health: storage.configured ? await verifyStorageConnection() : null,
+      },
+      japanese: { engine: "kuromoji + wanakana", translation: process.env.LIBRETRANSLATE_URL ? "libretranslate" : null },
+    });
+    return;
+  }
+
+  if (request.method === "GET" && request.url.startsWith("/api/recordings?")) {
+    await handleRecordingList(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/api/recordings") {
+    await handleRecordingList(request, response);
+    return;
+  }
+
+  const recordingMatch = request.method === "GET" && request.url.match(/^\/api\/recordings\/([0-9a-f-]+)$/i);
+  if (recordingMatch) {
+    await handleRecordingDetail(recordingMatch[1], response);
     return;
   }
 
