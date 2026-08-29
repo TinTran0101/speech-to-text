@@ -27,16 +27,22 @@
     </header>
 
     <main>
-      <section class="hero">
-        <p class="eyebrow">AUDIO → TEXT, RÕ TỪNG GIỌNG NÓI</p>
-        <h1>Nghe lại cuộc trò chuyện<br /><em>bằng mắt.</em></h1>
-        <p class="hero-copy">
-          Tải audio lên, nhận transcript có mốc thời gian, tự động phân biệt người nói và theo dõi từng câu ngay trên trình phát.
-        </p>
-      </section>
-
       <section class="workspace" aria-label="Không gian xử lý audio">
         <aside class="control-panel">
+          <section class="audio-library" aria-labelledby="audio-library-title">
+            <div class="audio-library-heading">
+              <div>
+                <p class="section-kicker">ĐÃ LƯU TRÊN CLOUD</p>
+                <h2 id="audio-library-title">Thư viện audio</h2>
+              </div>
+              <button id="refresh-library" type="button" aria-label="Tải lại thư viện" title="Tải lại">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.5 7M17.9 15.8A7 7 0 0 1 5.5 17"/></svg>
+              </button>
+            </div>
+            <p id="library-status" class="library-status">Đang tải danh sách...</p>
+            <div id="audio-library-list" class="audio-library-list"></div>
+          </section>
+
           <div class="panel-heading">
             <span class="step-number">01</span>
             <div>
@@ -112,19 +118,6 @@
           </button>
           <p id="form-error" class="form-error" role="alert"></p>
 
-          <section class="audio-library" aria-labelledby="audio-library-title">
-            <div class="audio-library-heading">
-              <div>
-                <p class="section-kicker">ĐÃ LƯU TRÊN CLOUD</p>
-                <h2 id="audio-library-title">Thư viện audio</h2>
-              </div>
-              <button id="refresh-library" type="button" aria-label="Tải lại thư viện" title="Tải lại">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 8.2A7 7 0 0 1 18.5 7M17.9 15.8A7 7 0 0 1 5.5 17"/></svg>
-              </button>
-            </div>
-            <p id="library-status" class="library-status">Đang tải danh sách...</p>
-            <div id="audio-library-list" class="audio-library-list"></div>
-          </section>
         </aside>
 
         <section class="result-panel">
@@ -236,11 +229,6 @@
         </section>
       </section>
     </main>
-
-    <footer>
-      <span>BUILT FOR CLEARER CONVERSATIONS</span>
-      <span>API POWERED BY ELEVENLABS</span>
-    </footer>
 
     <script type="module" src="/app.js"></script>
   </body>
