@@ -19,7 +19,10 @@ const HOST = process.env.HOST || "0.0.0.0";
 const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
 const MAX_TTS_CHARACTERS = 10_000;
 const STT_MODEL_ID = "scribe_v2";
-const TTS_MODEL_ID = "eleven_flash_v2_5";
+const DEFAULT_TTS_MODEL_ID = "eleven_flash_v2_5";
+const TTS_MODEL_IDS = new Set([DEFAULT_TTS_MODEL_ID, "eleven_v3"]);
+const ELEVEN_V3_MAX_CHARACTERS = 300;
+const ELEVEN_V3_WARNING_CHARACTERS = 100;
 const publicDirectory = fileURLToPath(new URL("./public/", import.meta.url));
 
 const mimeTypes = {
@@ -306,7 +309,12 @@ async function handleTextToSpeech(request, response) {
     const body = await readJsonBody(request);
     const text = String(body.text || "").trim();
     const voiceId = String(body.voiceId || "").trim();
-    const modelId = TTS_MODEL_ID;
+    const requestedModelId = String(body.modelId || DEFAULT_TTS_MODEL_ID).trim();
+    if (!TTS_MODEL_IDS.has(requestedModelId)) {
+      sendJson(response, 400, { error: "Model Text to Speech khong duoc ho tro." });
+      return;
+    }
+    const modelId = requestedModelId;
     const outputFormat = "mp3_44100_128";
     const languageCode = String(body.languageCode || (looksJapanese(text) ? "ja" : "auto"));
     const shouldTranslate = body.translate !== false;
@@ -323,6 +331,23 @@ async function handleTextToSpeech(request, response) {
     }
     if (text.length > MAX_TTS_CHARACTERS) {
       sendJson(response, 413, { error: `Noi dung vuot qua ${MAX_TTS_CHARACTERS.toLocaleString("vi-VN")} ky tu.` });
+      return;
+    }
+    if (modelId === "eleven_v3" && text.length > ELEVEN_V3_MAX_CHARACTERS) {
+      sendJson(response, 413, {
+        error: `Eleven v3 chi cho phep toi da ${ELEVEN_V3_MAX_CHARACTERS} ky tu moi lan.`,
+      });
+      return;
+    }
+    if (
+      modelId === "eleven_v3" &&
+      text.length > ELEVEN_V3_WARNING_CHARACTERS &&
+      body.confirmV3LongText !== true
+    ) {
+      sendJson(response, 409, {
+        error: `Noi dung Eleven v3 dai hon ${ELEVEN_V3_WARNING_CHARACTERS} ky tu va can xac nhan.`,
+        requiresConfirmation: true,
+      });
       return;
     }
     if (!voiceId) {

@@ -41,7 +41,9 @@ Mo `http://127.0.0.1:4173`, nhap ElevenLabs API key va chon file audio.
 
 Moi cau tieng Nhat duoc dich tu dong sang tieng Viet bang `google-translate-api-x` va hien ngay ben duoi cau goc. App gui nhieu cau trong mot batch de giam so request, sau do luu ban dich trong transcript cache tren Supabase.
 
-Text to Speech dung model `eleven_flash_v2_5` qua endpoint `POST /v1/text-to-speech/{voice_id}` cua ElevenLabs voi output MP3 44.1 kHz. Danh sach voice duoc tai qua `/v2/voices` va fallback `/v1/voices`. Cau tieng Nhat van duoc xu ly bang Kuromoji, Wanakana va Google Translate truoc khi luu.
+Text to Speech mac dinh dung model `eleven_flash_v2_5` va cho phep chon them `eleven_v3` qua endpoint `POST /v1/text-to-speech/{voice_id}` cua ElevenLabs voi output MP3 44.1 kHz. `eleven_v3` gioi han 300 ky tu moi request va yeu cau xac nhan tren 100 ky tu. Danh sach voice duoc tai qua `/v2/voices` va fallback `/v1/voices`. Cau tieng Nhat van duoc xu ly bang Kuromoji, Wanakana va Google Translate truoc khi luu.
+
+Bon voice tieng Nhat duoc ghim san trong app: Otani, Ishibashi, Shizuka va Konoha. Otani la voice mac dinh; cac voice khac trong tai khoan ElevenLabs van duoc noi them vao dropdown.
 
 Thu vien nay dung endpoint Google Translate khong chinh thuc va khong can API key. Google co the rate-limit hoac thay doi endpoint; khi dich tam thoi that bai, mo lai ban ghi de app thu lai.
 

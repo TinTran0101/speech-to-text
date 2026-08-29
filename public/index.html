@@ -248,13 +248,18 @@
             <button id="tts-refresh-voices" class="inline-link-button" type="button">Tải voices</button>
           </div>
           <select id="tts-voice">
-            <option value="21m00Tcm4TlvDq8ikWAM">Rachel · premade</option>
+            <option value="3JDquces8E8bkmvbh6Bc" selected>Male - Standard (Otani)</option>
+            <option value="Mv8AjrYZCBkdsmDHNwcB">Male - Kanto (Ishibashi)</option>
+            <option value="WQz3clzUdMqvBf0jswZQ">Female - Standard (Shizuka)</option>
+            <option value="T7yYq3WpB94yAuOXraRi">Female - Kanto (Konoha)</option>
           </select>
 
           <label class="field-label field-label-spaced" for="tts-model">Model</label>
           <select id="tts-model">
             <option value="eleven_flash_v2_5">Flash v2.5 · nhanh</option>
+            <option value="eleven_v3">Eleven v3 · biểu cảm</option>
           </select>
+          <p id="tts-model-limit-note" class="model-limit-note">Flash v2.5 hỗ trợ tối đa 10.000 ký tự mỗi lần.</p>
 
           <div class="voice-settings">
             <label>
@@ -268,6 +273,14 @@
           </div>
 
           <p id="tts-form-error" class="form-error" role="alert"></p>
+          <div id="tts-v3-warning" class="tts-v3-warning" role="alertdialog" aria-labelledby="tts-v3-warning-title" hidden>
+            <strong id="tts-v3-warning-title">Xác nhận nội dung dài cho Eleven v3</strong>
+            <p id="tts-v3-warning-message"></p>
+            <div>
+              <button id="tts-v3-cancel" class="secondary-button" type="button">Quay lại sửa</button>
+              <button id="tts-v3-confirm" class="warning-confirm-button" type="button">Vẫn tiếp tục</button>
+            </div>
+          </div>
           <button id="tts-generate" class="primary-button" type="button">
             <span>Tạo và lưu audio</span>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
@@ -293,7 +306,7 @@
             ></textarea>
             <div class="tts-text-meta">
               <span>Tiếng Nhật sẽ tự động có cách đọc hiragana và nghĩa tiếng Việt.</span>
-              <strong><span id="tts-character-count">0</span>/10.000</strong>
+              <strong><span id="tts-character-count">0</span>/<span id="tts-character-limit">10.000</span></strong>
             </div>
 
             <div id="tts-idle" class="tts-idle-card">
@@ -339,6 +352,7 @@
       </section>
     </main>
 
+    <script type="module" src="/navigation.js"></script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

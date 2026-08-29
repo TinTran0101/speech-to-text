@@ -187,7 +187,16 @@ async function openRecording(recordingId) {
     elements.resultTitle.textContent = recording.fileName || "Bản ghi đã lưu";
     setResultView("transcript");
     requestAnimationFrame(drawWaveform);
-    elements.libraryStatus.textContent = "Đã tải bản ghi từ Supabase.";
+    if (state.audioUrl) {
+      try {
+        await elements.audio.play();
+        elements.libraryStatus.textContent = "Đang phát bản ghi từ Supabase.";
+      } catch {
+        elements.libraryStatus.textContent = "Đã tải bản ghi. Bấm Space để phát.";
+      }
+    } else {
+      elements.libraryStatus.textContent = "Bản ghi này không có audio đã lưu.";
+    }
   } catch (error) {
     elements.libraryStatus.textContent = error instanceof Error ? error.message : "Không thể mở bản ghi.";
   }
@@ -607,6 +616,19 @@ function transcriptAsSrt() {
     .join("\n\n");
 }
 
+function isTextEntryTarget(target) {
+  return (
+    target instanceof HTMLElement &&
+    (target.matches("input, textarea, select, button") || target.isContentEditable)
+  );
+}
+
+function toggleSttPlayback() {
+  if (!elements.audio.src) return;
+  if (elements.audio.paused) void elements.audio.play();
+  else elements.audio.pause();
+}
+
 elements.apiKey.addEventListener("input", () => {
   if (elements.rememberKey.checked) localStorage.setItem("elevenlabs-api-key", elements.apiKey.value);
   clearTimeout(state.autoTranscribeTimer);
@@ -646,8 +668,7 @@ for (const eventName of ["dragleave", "drop"]) {
 elements.dropZone.addEventListener("drop", (event) => setAudioFile(event.dataTransfer?.files?.[0]));
 
 elements.playButton.addEventListener("click", () => {
-  if (elements.audio.paused) elements.audio.play();
-  else elements.audio.pause();
+  toggleSttPlayback();
 });
 elements.audio.addEventListener("play", () => {
   elements.playButton.classList.add("is-playing");
@@ -708,6 +729,21 @@ elements.search.addEventListener("input", () => {
 elements.downloadTxt.addEventListener("click", () => downloadFile(transcriptAsText(), "txt", "text/plain;charset=utf-8"));
 elements.downloadSrt.addEventListener("click", () => downloadFile(transcriptAsSrt(), "srt", "application/x-subrip;charset=utf-8"));
 window.addEventListener("resize", drawWaveform);
+window.addEventListener("app:viewchange", (event) => {
+  if (event.detail?.view !== "stt") elements.audio.pause();
+});
+document.addEventListener("keydown", (event) => {
+  if (
+    event.code !== "Space" ||
+    event.repeat ||
+    document.body.dataset.appView !== "stt" ||
+    isTextEntryTarget(event.target)
+  ) {
+    return;
+  }
+  event.preventDefault();
+  toggleSttPlayback();
+});
 
 const savedApiKey = localStorage.getItem("elevenlabs-api-key");
 if (savedApiKey) {

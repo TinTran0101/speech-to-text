@@ -16,3 +16,14 @@ test("uses recording_type when the new API provides it", () => {
   assert.equal(isTextToSpeechRecording({ recording_type: "text_to_speech", model_id: "scribe_v1" }), true);
   assert.equal(isTextToSpeechRecording({ recording_type: "speech_to_text", model_id: "eleven_flash_v2_5" }), false);
 });
+
+test("recognizes camelCase recording details returned by the API", () => {
+  assert.equal(
+    isTextToSpeechRecording({
+      recordingType: "speech_to_text",
+      modelId: "scribe_v1",
+      transcript: { kind: "text_to_speech" },
+    }),
+    true,
+  );
+});

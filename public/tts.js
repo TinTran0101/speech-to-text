@@ -4,8 +4,8 @@ const selectors = {
   analysis: "#tts-analysis",
   apiKey: "#api-key",
   audio: "#tts-audio",
-  brand: ".brand",
   characterCount: "#tts-character-count",
+  characterLimit: "#tts-character-limit",
   download: "#tts-download",
   formError: "#tts-form-error",
   generate: "#tts-generate",
@@ -13,7 +13,7 @@ const selectors = {
   libraryList: "#tts-library-list",
   libraryStatus: "#tts-library-status",
   model: "#tts-model",
-  navButtons: "[data-app-view]",
+  modelLimitNote: "#tts-model-limit-note",
   processing: "#tts-processing",
   refreshLibrary: "#tts-refresh-library",
   refreshVoices: "#tts-refresh-voices",
@@ -25,21 +25,55 @@ const selectors = {
   similarityValue: "#tts-similarity-value",
   stability: "#tts-stability",
   stabilityValue: "#tts-stability-value",
-  sttWorkspace: "#stt-workspace",
   text: "#tts-text",
   toggleReading: "#tts-toggle-reading",
   toggleRomaji: "#tts-toggle-romaji",
   toggleTranslation: "#tts-toggle-translation",
-  ttsWorkspace: "#tts-workspace",
+  v3Cancel: "#tts-v3-cancel",
+  v3Confirm: "#tts-v3-confirm",
+  v3Warning: "#tts-v3-warning",
+  v3WarningMessage: "#tts-v3-warning-message",
   voice: "#tts-voice",
 };
+
+const DEFAULT_TTS_MAX_CHARACTERS = 10_000;
+const ELEVEN_V3_MAX_CHARACTERS = 300;
+const ELEVEN_V3_WARNING_CHARACTERS = 100;
+const DEFAULT_TTS_VOICE_ID = "3JDquces8E8bkmvbh6Bc";
+const REMOVED_TTS_VOICE_IDS = new Set(["21m00Tcm4TlvDq8ikWAM"]);
+const PRESET_TTS_VOICES = [
+  { id: DEFAULT_TTS_VOICE_ID, name: "Male - Standard (Otani)" },
+  { id: "Mv8AjrYZCBkdsmDHNwcB", name: "Male - Kanto (Ishibashi)" },
+  { id: "WQz3clzUdMqvBf0jswZQ", name: "Female - Standard (Shizuka)" },
+  { id: "T7yYq3WpB94yAuOXraRi", name: "Female - Kanto (Konoha)" },
+];
 
 const state = {
   audioUrl: "",
   generatedFileName: "text-to-speech.mp3",
   generation: null,
   isGenerating: false,
+  v3ConfirmationResolve: null,
 };
+
+export function getTtsTextPolicy(modelId, characterCount) {
+  const isV3 = modelId === "eleven_v3";
+  const maximum = isV3 ? ELEVEN_V3_MAX_CHARACTERS : DEFAULT_TTS_MAX_CHARACTERS;
+  return {
+    maximum,
+    requiresConfirmation: isV3 && characterCount > ELEVEN_V3_WARNING_CHARACTERS && characterCount <= maximum,
+    tooLong: characterCount > maximum,
+  };
+}
+
+export function mergeTtsVoices(accountVoices = []) {
+  const voicesById = new Map(PRESET_TTS_VOICES.map((voice) => [voice.id, voice]));
+  for (const voice of accountVoices) {
+    if (!voice?.id || REMOVED_TTS_VOICE_IDS.has(voice.id) || voicesById.has(voice.id)) continue;
+    voicesById.set(voice.id, voice);
+  }
+  return [...voicesById.values()];
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -77,16 +111,34 @@ function revokeGeneratedAudioUrl() {
   if (state.audioUrl.startsWith("blob:")) URL.revokeObjectURL(state.audioUrl);
 }
 
-function setView(view, elements) {
-  const isTts = view === "tts";
-  elements.sttWorkspace.hidden = isTts;
-  elements.ttsWorkspace.hidden = !isTts;
-  elements.navButtons.forEach((button) => {
-    const active = button.dataset.appView === view;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", String(active));
+function closeV3Warning(elements, confirmed = false) {
+  elements.v3Warning.hidden = true;
+  const resolve = state.v3ConfirmationResolve;
+  state.v3ConfirmationResolve = null;
+  resolve?.(confirmed);
+}
+
+function requestV3Confirmation(elements, characterCount) {
+  closeV3Warning(elements, false);
+  elements.v3WarningMessage.textContent =
+    `Nội dung hiện có ${characterCount.toLocaleString("vi-VN")} ký tự, đã vượt ngưỡng cảnh báo 100 ký tự của ứng dụng. Bạn có chắc muốn tiếp tục?`;
+  elements.v3Warning.hidden = false;
+  elements.v3Confirm.focus();
+  return new Promise((resolve) => {
+    state.v3ConfirmationResolve = resolve;
   });
-  history.replaceState(null, "", `${window.location.pathname}${window.location.search}${isTts ? "#tts" : "#stt"}`);
+}
+
+function updateTextLimits(elements) {
+  const policy = getTtsTextPolicy(elements.model.value, elements.text.value.length);
+  elements.text.maxLength = policy.maximum;
+  elements.characterCount.textContent = elements.text.value.length.toLocaleString("vi-VN");
+  elements.characterLimit.textContent = policy.maximum.toLocaleString("vi-VN");
+  elements.modelLimitNote.textContent =
+    elements.model.value === "eleven_v3"
+      ? "Eleven v3: tối đa 300 ký tự; cần xác nhận nếu vượt 100 ký tự."
+      : "Flash v2.5 hỗ trợ tối đa 10.000 ký tự mỗi lần.";
+  elements.characterCount.closest("strong")?.classList.toggle("is-over-limit", policy.tooLong);
 }
 
 function setTtsState(view, elements) {
@@ -97,6 +149,23 @@ function setTtsState(view, elements) {
 
 function selectedVoice(elements) {
   return elements.voice.options[elements.voice.selectedIndex];
+}
+
+function renderVoiceOptions(elements, accountVoices = []) {
+  const voices = mergeTtsVoices(accountVoices);
+  let savedVoiceId = localStorage.getItem("elevenlabs-voice-id");
+  if (REMOVED_TTS_VOICE_IDS.has(savedVoiceId)) {
+    localStorage.removeItem("elevenlabs-voice-id");
+    savedVoiceId = null;
+  }
+  const selectedVoiceId = voices.some((voice) => voice.id === savedVoiceId)
+    ? savedVoiceId
+    : DEFAULT_TTS_VOICE_ID;
+  elements.voice.innerHTML = voices
+    .map(
+      (voice) => `<option value="${escapeHtml(voice.id)}"${voice.id === selectedVoiceId ? " selected" : ""}>${escapeHtml(voice.name)}${voice.language ? ` · ${escapeHtml(voice.language)}` : ""}</option>`,
+    )
+    .join("");
 }
 
 function renderAnalysis(generation, elements) {
@@ -157,15 +226,7 @@ async function loadVoices(elements) {
     const response = await fetch("/api/elevenlabs/voices", { headers: { "X-Api-Key": apiKey } });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Không thể tải danh sách voice.");
-    const voices = Array.isArray(result.voices) ? result.voices : [];
-    if (!voices.length) throw new Error("Tài khoản chưa có voice khả dụng.");
-    const savedVoiceId = localStorage.getItem("elevenlabs-voice-id");
-    elements.voice.innerHTML = voices
-      .map(
-        (voice) => `<option value="${escapeHtml(voice.id)}"${voice.id === savedVoiceId ? " selected" : ""}>${escapeHtml(voice.name)}${voice.language ? ` · ${escapeHtml(voice.language)}` : ""}</option>`,
-      )
-      .join("");
-    localStorage.setItem("elevenlabs-voice-id", elements.voice.value);
+    renderVoiceOptions(elements, Array.isArray(result.voices) ? result.voices : []);
   } catch (error) {
     elements.formError.textContent = error instanceof Error ? error.message : "Không thể tải danh sách voice.";
   } finally {
@@ -221,7 +282,7 @@ async function openRecording(recordingId, elements) {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Không thể mở câu đã lưu.");
     const recording = result.recording;
-    if (recording.recordingType !== "text_to_speech") throw new Error("Bản ghi này không phải Text to Speech.");
+    if (!isTextToSpeechRecording(recording)) throw new Error("Bản ghi này không phải Text to Speech.");
     elements.text.value = recording.sourceText || recording.transcript?.text || "";
     elements.characterCount.textContent = elements.text.value.length.toLocaleString("vi-VN");
     renderGeneration(
@@ -244,6 +305,7 @@ async function generate(elements) {
   const apiKey = elements.apiKey.value.trim();
   const text = elements.text.value.trim();
   const voice = selectedVoice(elements);
+  const textPolicy = getTtsTextPolicy(elements.model.value, text.length);
   if (!apiKey) {
     elements.formError.textContent = "Vui lòng nhập ElevenLabs API key.";
     return;
@@ -256,6 +318,18 @@ async function generate(elements) {
   if (!elements.voice.value) {
     elements.formError.textContent = "Vui lòng tải và chọn một voice ElevenLabs.";
     return;
+  }
+
+  if (textPolicy.tooLong) {
+    elements.formError.textContent = `Model ${elements.model.value} chỉ cho phép tối đa ${textPolicy.maximum.toLocaleString("vi-VN")} ký tự mỗi lần.`;
+    elements.text.focus();
+    return;
+  }
+
+  let confirmV3LongText = false;
+  if (textPolicy.requiresConfirmation) {
+    confirmV3LongText = await requestV3Confirmation(elements, text.length);
+    if (!confirmV3LongText) return;
   }
 
   state.isGenerating = true;
@@ -271,6 +345,7 @@ async function generate(elements) {
         voiceId: elements.voice.value,
         voiceName: voice?.textContent?.split(" · ")[0] || "ElevenLabs voice",
         modelId: elements.model.value,
+        confirmV3LongText,
         stability: Number(elements.stability.value),
         similarityBoost: Number(elements.similarity.value),
         translate: true,
@@ -293,19 +368,21 @@ export function initTextToSpeech() {
   const elements = Object.fromEntries(
     Object.entries(selectors).map(([key, selector]) => [
       key,
-      key === "navButtons" ? [...document.querySelectorAll(selector)] : document.querySelector(selector),
+      document.querySelector(selector),
     ]),
   );
-  if (!elements.ttsWorkspace || !elements.sttWorkspace) return;
-
-  elements.navButtons.forEach((button) => button.addEventListener("click", () => setView(button.dataset.appView, elements)));
-  elements.brand.addEventListener("click", (event) => {
-    event.preventDefault();
-    setView("stt", elements);
-  });
+  if (!elements.audio || !elements.text) return;
+  renderVoiceOptions(elements);
   elements.text.addEventListener("input", () => {
-    elements.characterCount.textContent = elements.text.value.length.toLocaleString("vi-VN");
+    closeV3Warning(elements, false);
+    updateTextLimits(elements);
   });
+  elements.model.addEventListener("change", () => {
+    closeV3Warning(elements, false);
+    updateTextLimits(elements);
+  });
+  elements.v3Cancel.addEventListener("click", () => closeV3Warning(elements, false));
+  elements.v3Confirm.addEventListener("click", () => closeV3Warning(elements, true));
   elements.refreshVoices.addEventListener("click", () => loadVoices(elements));
   elements.voice.addEventListener("change", () => localStorage.setItem("elevenlabs-voice-id", elements.voice.value));
   elements.refreshLibrary.addEventListener("click", () => loadLibrary(elements));
@@ -345,9 +422,14 @@ export function initTextToSpeech() {
     });
   }
   window.addEventListener("beforeunload", revokeGeneratedAudioUrl);
-  window.addEventListener("hashchange", () => setView(window.location.hash === "#tts" ? "tts" : "stt", elements));
+  window.addEventListener("app:viewchange", (event) => {
+    if (event.detail?.view !== "tts") {
+      elements.audio.pause();
+      closeV3Warning(elements, false);
+    }
+  });
 
-  setView(window.location.hash === "#tts" ? "tts" : "stt", elements);
+  updateTextLimits(elements);
   loadLibrary(elements);
   if (elements.apiKey.value) loadVoices(elements);
 }
