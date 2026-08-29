@@ -12,6 +12,9 @@ create table public.recordings (
   audio_path text,
   language_code text,
   model_id text,
+  recording_type text not null default 'speech_to_text'
+    check (recording_type in ('speech_to_text', 'text_to_speech')),
+  source_text text,
   duration_seconds numeric check (duration_seconds is null or duration_seconds >= 0),
   transcript_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
@@ -22,6 +25,7 @@ create index recordings_file_hash_idx on public.recordings (file_hash);
 create index recordings_created_idx on public.recordings (created_at desc);
 create index recordings_user_created_idx on public.recordings (user_id, created_at desc);
 create index recordings_language_idx on public.recordings (language_code);
+create index recordings_type_created_idx on public.recordings (recording_type, created_at desc);
 
 create function public.set_updated_at()
 returns trigger language plpgsql as $$

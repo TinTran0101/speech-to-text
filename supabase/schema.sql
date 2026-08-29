@@ -1,4 +1,4 @@
--- Speech-to-Text database schema. Safe to run repeatedly in SQL Editor.
+-- Shared Speech-to-Text and Text-to-Speech schema. Safe to run repeatedly in SQL Editor.
 create extension if not exists pgcrypto;
 
 create table if not exists public.recordings (
@@ -12,6 +12,9 @@ create table if not exists public.recordings (
   audio_path text,
   language_code text,
   model_id text,
+  recording_type text not null default 'speech_to_text'
+    check (recording_type in ('speech_to_text', 'text_to_speech')),
+  source_text text,
   duration_seconds numeric check (duration_seconds is null or duration_seconds >= 0),
   transcript_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
@@ -23,14 +26,32 @@ alter table public.recordings add column if not exists user_id uuid references a
 alter table public.recordings add column if not exists cache_key text;
 alter table public.recordings add column if not exists file_hash text;
 alter table public.recordings add column if not exists audio_path text;
+alter table public.recordings add column if not exists recording_type text not null default 'speech_to_text';
+alter table public.recordings add column if not exists source_text text;
 alter table public.recordings add column if not exists duration_seconds numeric;
 alter table public.recordings add column if not exists updated_at timestamptz not null default now();
+
+alter table public.recordings drop constraint if exists recordings_recording_type_check;
+alter table public.recordings add constraint recordings_recording_type_check
+  check (recording_type in ('speech_to_text', 'text_to_speech'));
+
+-- Backfill rows that were saved before recording_type was introduced.
+update public.recordings
+set
+  recording_type = 'text_to_speech',
+  source_text = coalesce(source_text, transcript_json ->> 'text')
+where transcript_json ->> 'kind' = 'text_to_speech';
+
+update public.recordings
+set recording_type = 'speech_to_text'
+where transcript_json ->> 'kind' = 'speech_to_text';
 
 create unique index if not exists recordings_cache_key_uidx on public.recordings (cache_key);
 create index if not exists recordings_file_hash_idx on public.recordings (file_hash);
 create index if not exists recordings_created_idx on public.recordings (created_at desc);
 create index if not exists recordings_user_created_idx on public.recordings (user_id, created_at desc);
 create index if not exists recordings_language_idx on public.recordings (language_code);
+create index if not exists recordings_type_created_idx on public.recordings (recording_type, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$

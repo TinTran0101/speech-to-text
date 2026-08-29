@@ -17,6 +17,9 @@ import {
 const PORT = Number(process.env.PORT || 4173);
 const HOST = process.env.HOST || "0.0.0.0";
 const MAX_AUDIO_BYTES = 500 * 1024 * 1024;
+const MAX_TTS_CHARACTERS = 10_000;
+const STT_MODEL_ID = "scribe_v2";
+const TTS_MODEL_ID = "eleven_flash_v2_5";
 const publicDirectory = fileURLToPath(new URL("./public/", import.meta.url));
 
 const mimeTypes = {
@@ -31,6 +34,18 @@ const mimeTypes = {
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(payload));
+}
+
+function clampNumber(value, fallback, minimum, maximum) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
+}
+
+function elevenLabsErrorMessage(result, fallback) {
+  const detail = result?.detail;
+  return typeof detail === "string"
+    ? detail
+    : detail?.message || result?.message || result?.error || fallback;
 }
 
 function readRequestBody(request) {
@@ -129,7 +144,7 @@ async function enrichJapanese(result, languageCode) {
 async function handleTranscription(request, response) {
   const apiKey = request.headers["x-api-key"];
   const rawFileName = request.headers["x-file-name"] || "audio-file";
-  const modelId = request.headers["x-model-id"] || "scribe_v1";
+  const modelId = STT_MODEL_ID;
   const languageCode = request.headers["x-language-code"];
 
   if (!apiKey || typeof apiKey !== "string") {
@@ -205,6 +220,7 @@ async function handleTranscription(request, response) {
     }
 
     await enrichJapanese(result, languageCode);
+    result.kind = "speech_to_text";
     const saved = await saveRecording({
       audioBuffer,
       cacheKey,
@@ -237,6 +253,178 @@ async function handleJapaneseAnalysis(request, response) {
   }
 }
 
+async function handleVoiceList(request, response) {
+  const apiKey = request.headers["x-api-key"];
+  if (!apiKey || typeof apiKey !== "string") {
+    sendJson(response, 400, { error: "Vui long nhap ElevenLabs API key." });
+    return;
+  }
+
+  try {
+    let elevenLabsResponse = await fetch("https://api.elevenlabs.io/v2/voices?page_size=100", {
+      headers: { "xi-api-key": apiKey },
+    });
+    if (elevenLabsResponse.status === 404) {
+      elevenLabsResponse = await fetch("https://api.elevenlabs.io/v1/voices", {
+        headers: { "xi-api-key": apiKey },
+      });
+    }
+
+    const result = await elevenLabsResponse.json().catch(() => ({}));
+    if (!elevenLabsResponse.ok) {
+      sendJson(response, elevenLabsResponse.status, {
+        error: elevenLabsErrorMessage(result, "Khong the tai danh sach giong doc."),
+      });
+      return;
+    }
+
+    const voices = (Array.isArray(result.voices) ? result.voices : [])
+      .map((voice) => ({
+        id: voice.voice_id,
+        name: voice.name || "ElevenLabs voice",
+        category: voice.category || voice.labels?.use_case || "voice",
+        language: voice.labels?.language || voice.labels?.accent || null,
+        previewUrl: voice.preview_url || null,
+      }))
+      .filter((voice) => voice.id);
+    sendJson(response, 200, { voices });
+  } catch (error) {
+    sendJson(response, 502, {
+      error: error instanceof Error ? error.message : "Khong the ket noi ElevenLabs.",
+    });
+  }
+}
+
+async function handleTextToSpeech(request, response) {
+  const apiKey = request.headers["x-api-key"];
+  if (!apiKey || typeof apiKey !== "string") {
+    sendJson(response, 400, { error: "Vui long nhap ElevenLabs API key." });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request);
+    const text = String(body.text || "").trim();
+    const voiceId = String(body.voiceId || "").trim();
+    const modelId = TTS_MODEL_ID;
+    const outputFormat = "mp3_44100_128";
+    const languageCode = String(body.languageCode || (looksJapanese(text) ? "ja" : "auto"));
+    const shouldTranslate = body.translate !== false;
+    const voiceSettings = {
+      stability: clampNumber(body.stability, 0.5, 0, 1),
+      similarity_boost: clampNumber(body.similarityBoost, 0.75, 0, 1),
+      style: clampNumber(body.style, 0, 0, 1),
+      use_speaker_boost: body.useSpeakerBoost !== false,
+    };
+
+    if (!text) {
+      sendJson(response, 400, { error: "Vui long nhap noi dung can doc." });
+      return;
+    }
+    if (text.length > MAX_TTS_CHARACTERS) {
+      sendJson(response, 413, { error: `Noi dung vuot qua ${MAX_TTS_CHARACTERS.toLocaleString("vi-VN")} ky tu.` });
+      return;
+    }
+    if (!voiceId) {
+      sendJson(response, 400, { error: "Vui long chon giong doc ElevenLabs." });
+      return;
+    }
+
+    const cacheKey = hashAudio(
+      Buffer.from(
+        `tts:${text}:${voiceId}:${modelId}:${outputFormat}:${JSON.stringify(voiceSettings)}:${shouldTranslate}:kanji-google-v1`,
+      ),
+    );
+    const cached = await findCachedRecording(cacheKey);
+    if (cached) {
+      const recording = await getRecording(cached.id);
+      if (recording?.audioUrl) {
+        sendJson(response, 200, {
+          generation: {
+            ...recording.transcript,
+            audioUrl: recording.audioUrl,
+            cache: { hit: true, saved: true, recordingId: recording.id },
+          },
+        });
+        return;
+      }
+    }
+
+    const japanese = looksJapanese(text)
+      ? await analyzeJapaneseSentences([{ id: 0, text }], { translate: shouldTranslate })
+      : null;
+    const elevenLabsResponse = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=${outputFormat}`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "audio/mpeg",
+          "Content-Type": "application/json",
+          "xi-api-key": apiKey,
+        },
+        body: JSON.stringify({
+          text,
+          model_id: modelId,
+          voice_settings: voiceSettings,
+        }),
+      },
+    );
+
+    if (!elevenLabsResponse.ok) {
+      const rawResponse = await elevenLabsResponse.text();
+      let result;
+      try {
+        result = JSON.parse(rawResponse);
+      } catch {
+        result = { error: rawResponse };
+      }
+      sendJson(response, elevenLabsResponse.status, {
+        error: elevenLabsErrorMessage(result, "ElevenLabs khong the tao audio."),
+        detail: result,
+      });
+      return;
+    }
+
+    const audioBuffer = Buffer.from(await elevenLabsResponse.arrayBuffer());
+    const title = text.replace(/\s+/g, " ").slice(0, 54);
+    const generatedAt = new Date().toISOString();
+    const generation = {
+      kind: "text_to_speech",
+      text,
+      voiceId,
+      voiceName: String(body.voiceName || "ElevenLabs voice"),
+      modelId,
+      languageCode,
+      outputFormat,
+      japanese,
+      generatedAt,
+    };
+    const saved = await saveRecording({
+      audioBuffer,
+      cacheKey,
+      contentType: "audio/mpeg",
+      fileHash: hashAudio(audioBuffer),
+      fileName: `${title || "text-to-speech"}.mp3`,
+      languageCode,
+      modelId,
+      recordingType: "text_to_speech",
+      sourceText: text,
+      transcript: generation,
+    });
+
+    sendJson(response, 200, {
+      generation: {
+        ...generation,
+        audioBase64: audioBuffer.toString("base64"),
+        mimeType: "audio/mpeg",
+        cache: { hit: false, saved: Boolean(saved), recordingId: saved?.id || null },
+      },
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : "Loi khong xac dinh." });
+  }
+}
+
 async function handleRecordingList(request, response) {
   const status = storageStatus();
   if (!status.configured) {
@@ -246,7 +434,9 @@ async function handleRecordingList(request, response) {
 
   try {
     const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
-    const recordings = await listRecordings(requestUrl.searchParams.get("limit") || 100);
+    const recordingType =
+      requestUrl.searchParams.get("type") === "text_to_speech" ? "text_to_speech" : "speech_to_text";
+    const recordings = await listRecordings(requestUrl.searchParams.get("limit") || 100, recordingType);
     sendJson(response, 200, { configured: true, recordings });
   } catch (error) {
     sendJson(response, 500, { error: error instanceof Error ? error.message : "Khong the tai thu vien." });
@@ -265,7 +455,10 @@ async function handleRecordingDetail(recordingId, response) {
       sendJson(response, 404, { error: "Khong tim thay ban ghi." });
       return;
     }
-    const translationAdded = await enrichJapanese(recording.transcript, recording.languageCode);
+    const translationAdded =
+      recording.recordingType === "speech_to_text"
+        ? await enrichJapanese(recording.transcript, recording.languageCode)
+        : false;
     if (translationAdded) await updateRecordingTranscript(recording.id, recording.transcript);
     sendJson(response, 200, { recording });
   } catch (error) {
@@ -299,6 +492,16 @@ const server = createServer(async (request, response) => {
 
   if (request.method === "POST" && request.url === "/api/japanese/analyze") {
     await handleJapaneseAnalysis(request, response);
+    return;
+  }
+
+  if (request.method === "POST" && request.url === "/api/text-to-speech") {
+    await handleTextToSpeech(request, response);
+    return;
+  }
+
+  if (request.method === "GET" && request.url === "/api/elevenlabs/voices") {
+    await handleVoiceList(request, response);
     return;
   }
 

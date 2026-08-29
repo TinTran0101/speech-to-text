@@ -38,7 +38,7 @@ insert into public.recordings (
 )
 values (
   'sample-cache-key', 'sample-file-hash', 'sample.mp3', 123456,
-  'audio/mpeg', '2026-08-28/sample.mp3', 'ja', 'scribe_v1', 42.5,
+  'audio/mpeg', '2026-08-28/sample.mp3', 'ja', 'scribe_v2', 42.5,
   '{"text":"日本語のサンプルです。","words":[]}'::jsonb
 )
 on conflict (cache_key) do update set

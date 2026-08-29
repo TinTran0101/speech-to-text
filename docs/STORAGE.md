@@ -4,10 +4,13 @@
 
 - Supabase Postgres luu metadata va `transcript_json`.
 - Supabase Storage bucket private `recording-audio` luu MP3/M4A.
+- Speech to Text va Text to Speech dung chung bang `recordings`; cot `recording_type` phan biet hai loai.
 - `cache_key` gom hash SHA-256 cua audio, model, ngon ngu va phien ban pipeline.
 - Khi upload lai cung file va cau hinh, server tra transcript cache truoc khi goi ElevenLabs.
 
 Khong luu audio truc tiep vao Postgres `bytea`. File nam trong Storage, database chi luu `audio_path`.
+
+Huong dan nang cap, tao lai schema va kiem tra sau khi khoi phuc nam tai `SUPABASE_RECOVERY.md`.
 
 ## Supabase Free co du cho 100 file?
 

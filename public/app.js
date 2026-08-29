@@ -1,3 +1,5 @@
+import { initTextToSpeech } from "./tts.js";
+
 const elements = {
   apiKey: document.querySelector("#api-key"),
   audioLibraryList: document.querySelector("#audio-library-list"),
@@ -127,7 +129,7 @@ async function loadRecordings() {
   elements.refreshLibrary.disabled = true;
   elements.libraryStatus.textContent = "Đang tải danh sách...";
   try {
-    const response = await fetch("/api/recordings?limit=100");
+    const response = await fetch("/api/recordings?type=speech_to_text&limit=100");
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Không thể tải thư viện.");
     if (!result.configured) {
@@ -709,6 +711,7 @@ if (savedApiKey) {
   elements.apiKey.value = savedApiKey;
   elements.rememberKey.checked = true;
 }
+initTextToSpeech();
 loadRecordings();
 
 async function loadJapaneseDemo() {

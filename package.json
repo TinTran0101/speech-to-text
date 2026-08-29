@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node start.mjs",
     "start": "node start.mjs",
-    "check": "node --check start.mjs && node --check server.mjs && node --check public/app.js && node --check scripts/supabase-admin.mjs",
+    "check": "node --check start.mjs && node --check server.mjs && node --check public/app.js && node --check public/tts.js && node --check src/storage.mjs && node --check src/japanese.mjs && node --check scripts/supabase-admin.mjs",
+    "test": "node --test tests/*.test.mjs",
     "supabase:status": "node --env-file=.env scripts/supabase-admin.mjs status",
     "supabase:list": "node --env-file=.env scripts/supabase-admin.mjs list",
     "supabase:stats": "node --env-file=.env scripts/supabase-admin.mjs stats"

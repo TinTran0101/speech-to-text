@@ -1,5 +1,34 @@
 # Supabase setup
 
+## Required update for Text to Speech
+
+If the project was created before Text to Speech was added, run this file once in **Supabase Dashboard -> SQL Editor**:
+
+```text
+supabase/migrations/202608290001_add_text_to_speech.sql
+```
+
+The migration only adds `recording_type`, `source_text`, a check constraint and an index. It does not delete existing Speech to Text rows or audio files.
+
+If Text to Speech items are already mixed into the Speech to Text library, also run:
+
+```text
+supabase/migrations/202608290002_backfill_recording_types.sql
+```
+
+This migration reads `transcript_json.kind`, repairs `recording_type` and fills `source_text` for existing TTS rows.
+
+After running it, verify the columns with:
+
+```sql
+select column_name, data_type
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'recordings'
+  and column_name in ('recording_type', 'source_text')
+order by column_name;
+```
+
 ## Dashboard setup
 
 1. Create a project at https://supabase.com/dashboard.
@@ -48,6 +77,27 @@ npx supabase db push
 ```
 
 Do not apply both `schema.sql` and the initial migration to the same new project. Choose one setup path.
+
+## Rebuild after losing the database
+
+`supabase/schema.sql` is the canonical full schema. On a new empty Supabase project:
+
+1. Open **SQL Editor -> New query**.
+2. Paste the complete contents of `supabase/schema.sql`.
+3. Click **Run** once.
+4. Update `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_AUDIO_BUCKET` in the deployment environment.
+5. Redeploy the app and check `/api/status`.
+
+The schema recreates:
+
+- The `recordings` table for both `speech_to_text` and `text_to_speech`.
+- Indexes, the `updated_at` trigger and RLS policies.
+- The private `recording-audio` Storage bucket.
+- Storage read, upload, update and delete policies.
+
+Running `schema.sql` again is safe and is also the easiest way to repair missing tables, columns, indexes, triggers, bucket settings or policies.
+
+Schema recreation does not restore old rows or audio objects. Restoring old content requires a separate Postgres backup plus a backup of the `recording-audio` bucket. See `../docs/SUPABASE_RECOVERY.md` for the full checklist.
 
 ## Data flow
 
