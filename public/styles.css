@@ -156,6 +156,7 @@ select { padding-right: 10px; cursor: pointer; }
   transition: background 180ms, border-color 180ms, transform 180ms;
 }
 .drop-zone:hover, .drop-zone.is-dragging { background: rgba(198, 220, 114, 0.3); border-color: var(--ink); transform: translateY(-2px); }
+.drop-zone:disabled { opacity: 0.55; cursor: wait; transform: none; }
 .upload-icon { display: grid; place-items: center; width: 42px; height: 42px; margin-bottom: 10px; border-radius: 50%; color: var(--paper-light); background: var(--orange); }
 .upload-icon svg { width: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .drop-zone strong { font-size: 14px; }
@@ -361,7 +362,10 @@ body.editor-mode .result-panel { min-height: calc(100vh - 66px); background: #f7
 .japanese-line { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 4px 8px; color: #25292d; font-family: "Yu Gothic UI", "Meiryo", sans-serif; font-size: 21px; line-height: 2.35; }
 .reading-phrase { position: relative; display: inline-flex; flex-direction: column; align-items: center; }
 .reading-phrase ruby { ruby-position: over; }
+.ruby-surface { display: inline; }
 .reading-phrase rt { color: #6d7d89; font-family: var(--body); font-size: 9px; font-weight: 500; letter-spacing: 0.03em; }
+.japanese-word { display: inline; padding: 1px 0; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.japanese-word.is-active { color: #172016; background: var(--lime); box-shadow: 0 0 0 2px var(--lime); }
 .romaji { display: none; margin-top: -7px; color: #9a7440; font-family: var(--body); font-size: 8px; line-height: 1; }
 .show-romaji .romaji { display: block; }
 .hide-reading ruby rt { visibility: hidden; }
@@ -616,8 +620,16 @@ body.editor-mode .transcript-state {
 .editor-header {
   height: 62px;
   padding: 0 18px;
-  grid-template-columns: 125px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
+}
+
+.editor-title {
+  text-align: left;
+}
+
+.editor-badges {
+  justify-content: flex-start;
 }
 
 .editor-body {
@@ -655,13 +667,82 @@ body.editor-mode .transcript-state {
 }
 
 .segment {
-  grid-template-columns: 132px 42px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 78px 38px minmax(0, 1fr);
+  gap: 10px;
   padding: 19px 0;
+  scroll-margin-block: 40vh;
+}
+
+.segment-speaker {
+  padding-top: 7px;
+}
+
+.segment-speaker i {
+  display: none;
+}
+
+.segment-speaker span {
+  display: inline-flex;
+  padding: 5px 8px;
+  border-radius: 5px;
+  color: #172016;
+  background: var(--speaker-color);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.segment-time-rail time {
+  font-size: 11px;
+}
+
+.segment-text {
+  font-size: 19px;
+}
+
+.japanese-line {
+  font-size: 25px;
+}
+
+.reading-phrase rt {
+  font-size: 11px;
+}
+
+.translation-line {
+  font-size: 15px;
+}
+
+.translation-line strong {
+  font-size: 10px;
+}
+
+.romaji {
+  font-size: 8px;
 }
 
 .timeline-grid {
-  grid-template-columns: 168px minmax(520px, 1fr);
+  grid-template-columns: 92px minmax(520px, 1fr);
+}
+
+.timeline-speaker {
+  padding: 0 8px;
+}
+
+.timeline-speaker i {
+  display: none;
+}
+
+.timeline-speaker span {
+  display: inline-flex;
+  padding: 4px 7px;
+  border-radius: 4px;
+  color: #172016;
+  background: var(--speaker-color);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .transport-bar {
@@ -692,7 +773,6 @@ body.editor-mode .transcript-state {
   }
 
   .speaker-chip span,
-  .segment-speaker span,
   .language-helper {
     display: none;
   }
@@ -702,11 +782,11 @@ body.editor-mode .transcript-state {
   }
 
   .segment {
-    grid-template-columns: 42px 38px minmax(0, 1fr);
+    grid-template-columns: 72px 36px minmax(0, 1fr);
   }
 
   .timeline-grid {
-    grid-template-columns: 138px minmax(500px, 1fr);
+    grid-template-columns: 86px minmax(500px, 1fr);
   }
 }
 
@@ -764,7 +844,7 @@ body.editor-mode .transcript-state {
   }
 
   .editor-header {
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .editor-body {
@@ -776,7 +856,7 @@ body.editor-mode .transcript-state {
   }
 
   .timeline-grid {
-    grid-template-columns: 104px minmax(500px, 1fr);
+    grid-template-columns: 82px minmax(500px, 1fr);
   }
 }
 
@@ -817,12 +897,16 @@ body.editor-mode .transcript-state {
   }
 
   .segment {
-    grid-template-columns: 32px 34px minmax(0, 1fr);
+    grid-template-columns: 68px 32px minmax(0, 1fr);
     gap: 6px;
   }
 
   .segment-text {
-    font-size: 15px;
+    font-size: 18px;
+  }
+
+  .japanese-line {
+    font-size: 21px;
   }
 }
 

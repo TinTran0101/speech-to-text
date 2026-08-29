@@ -17,7 +17,6 @@ const elements = {
   language: document.querySelector("#language"),
   libraryStatus: document.querySelector("#library-status"),
   model: document.querySelector("#model"),
-  newAudioButton: document.querySelector("#new-audio-button"),
   playbackRate: document.querySelector("#playback-rate"),
   playButton: document.querySelector("#play-button"),
   processingDetail: document.querySelector("#processing-detail"),
@@ -38,17 +37,19 @@ const elements = {
   toggleKey: document.querySelector("#toggle-key"),
   transcriptList: document.querySelector("#transcript-list"),
   transcriptState: document.querySelector("#transcript-state"),
-  transcribeButton: document.querySelector("#transcribe-button"),
   waveform: document.querySelector("#waveform"),
   waveformLoading: document.querySelector("#waveform-loading"),
 };
 
-const speakerColors = ["#f15a29", "#4d8fad", "#8da840", "#c79336", "#9c6aaa", "#3c9d88"];
+const speakerColors = ["#f1c75b", "#73aef5", "#8da840", "#c79336", "#9c6aaa", "#3c9d88"];
 const state = {
+  activeSegmentIndex: -1,
   activeWordIndex: -1,
   audioFile: null,
   audioUrl: "",
+  autoTranscribeTimer: null,
   elapsedTimer: null,
+  isTranscribing: false,
   segments: [],
   startedAt: 0,
   transcript: null,
@@ -85,7 +86,7 @@ function escapeHtml(value) {
 function speakerName(speakerId) {
   const match = String(speakerId).match(/(\d+)/);
   const number = match ? Number(match[1]) + 1 : 1;
-  return `Người nói ${number}`;
+  return `Người ${number}`;
 }
 
 function speakerColor(speakerId) {
@@ -94,11 +95,8 @@ function speakerColor(speakerId) {
   return speakerColors[index % speakerColors.length];
 }
 
-function updateSubmitState() {
-  elements.transcribeButton.disabled = !state.audioFile || !elements.apiKey.value.trim();
-}
-
 function setAudioFile(file) {
+  if (state.isTranscribing) return;
   if (!file) return;
   if (file.size > 500 * 1024 * 1024) {
     elements.formError.textContent = "File quá lớn. Vui lòng chọn file dưới 500 MB.";
@@ -116,8 +114,8 @@ function setAudioFile(file) {
   elements.selectedFile.hidden = false;
   elements.dropZone.hidden = true;
   elements.formError.textContent = "";
-  updateSubmitState();
   buildWaveform(file);
+  void transcribe();
 }
 
 function formatLibraryDate(value) {
@@ -191,6 +189,8 @@ async function openRecording(recordingId) {
 }
 
 function clearAudioFile() {
+  if (state.isTranscribing) return;
+  clearTimeout(state.autoTranscribeTimer);
   if (state.audioUrl) URL.revokeObjectURL(state.audioUrl);
   state.audioFile = null;
   state.audioUrl = "";
@@ -200,11 +200,18 @@ function clearAudioFile() {
   elements.selectedFile.hidden = true;
   elements.dropZone.hidden = false;
   resetTranscript();
-  updateSubmitState();
+}
+
+function clearPendingFile() {
+  state.audioFile = null;
+  elements.fileInput.value = "";
+  elements.selectedFile.hidden = true;
+  elements.dropZone.hidden = false;
 }
 
 function resetTranscript() {
   elements.audio.pause();
+  state.activeSegmentIndex = -1;
   state.activeWordIndex = -1;
   state.segments = [];
   state.transcript = null;
@@ -309,10 +316,55 @@ function groupSegments(words) {
   return segments;
 }
 
+function timedSurfaceMarkup(surface, words, cursor) {
+  const originalSurface = String(surface || "");
+  let remaining = originalSurface;
+  let markup = "";
+  const nextCursor = { index: cursor.index, offset: cursor.offset };
+
+  while (remaining && nextCursor.index < words.length) {
+    const word = words[nextCursor.index];
+    const wordText = String(word.text || "");
+    if (!wordText || nextCursor.offset >= wordText.length) {
+      nextCursor.index += 1;
+      nextCursor.offset = 0;
+      continue;
+    }
+
+    const available = wordText.slice(nextCursor.offset);
+    const leadingWhitespace = available.match(/^\s+/u)?.[0] || "";
+    if (leadingWhitespace && !remaining.startsWith(leadingWhitespace)) {
+      nextCursor.offset += leadingWhitespace.length;
+      continue;
+    }
+
+    const maxLength = Math.min(available.length, remaining.length);
+    let matchedLength = 0;
+    while (matchedLength < maxLength && available[matchedLength] === remaining[matchedLength]) matchedLength += 1;
+    if (!matchedLength) return escapeHtml(originalSurface);
+
+    const matchedText = remaining.slice(0, matchedLength);
+    markup += `<span class="word japanese-word" data-word-index="${word.index}" data-start="${word.start}">${escapeHtml(matchedText)}</span>`;
+    remaining = remaining.slice(matchedLength);
+    nextCursor.offset += matchedLength;
+    if (nextCursor.offset >= wordText.length) {
+      nextCursor.index += 1;
+      nextCursor.offset = 0;
+    }
+  }
+
+  if (remaining) return escapeHtml(originalSurface);
+  cursor.index = nextCursor.index;
+  cursor.offset = nextCursor.offset;
+  return markup;
+}
+
 function renderTranscript(result) {
   state.transcript = result;
   state.words = normalizeWords(result);
   state.segments = groupSegments(state.words);
+  state.activeSegmentIndex = -1;
+  state.activeWordIndex = -1;
   if (!state.segments.length) {
     elements.transcriptList.innerHTML = `<p class="fallback-text">${escapeHtml(result.text || "Không có nội dung được nhận diện.")}</p>`;
     return;
@@ -322,13 +374,14 @@ function renderTranscript(result) {
     .map((segment, segmentIndex) => {
       const japanese = result.japanese?.sentences?.find((item) => Number(item.id) === segmentIndex);
       const originalText = segment.words.map((word) => word.text).join("").trim();
+      const phraseCursor = { index: 0, offset: 0 };
       const phraseMarkup = japanese?.phrases
         ?.map((phrase) => {
-          const surface = escapeHtml(phrase.surface);
+          const surface = timedSurfaceMarkup(phrase.surface, segment.words, phraseCursor);
           const reading = escapeHtml(phrase.reading);
           return `
             <span class="reading-phrase">
-              ${phrase.hasKanji && reading ? `<ruby>${surface}<rt>${reading}</rt></ruby>` : `<span>${surface}</span>`}
+              ${phrase.hasKanji && reading ? `<ruby><span class="ruby-surface">${surface}</span><rt>${reading}</rt></ruby>` : `<span>${surface}</span>`}
               ${phrase.romaji ? `<small class="romaji">${escapeHtml(phrase.romaji)}</small>` : ""}
             </span>`;
         })
@@ -345,7 +398,6 @@ function renderTranscript(result) {
       return `
         <article class="segment" data-segment-index="${segmentIndex}" style="--speaker-color:${speakerColor(segment.speaker)}">
           <div class="segment-speaker">
-            <i>${speakerName(segment.speaker).replace("Người nói ", "")}</i>
             <span>${speakerName(segment.speaker)}</span>
           </div>
           <button class="segment-time-rail" type="button" data-start="${segment.start}" aria-label="Phát từ ${formatTime(segment.start)}">
@@ -394,7 +446,7 @@ function renderTimeline() {
   elements.timelineRuler.innerHTML = ticks.join("");
   elements.timelineSpeakers.innerHTML = speakers
     .map(
-      (speaker) => `<div class="timeline-speaker" style="--speaker-color:${speakerColor(speaker)}"><i></i>${speakerName(speaker)}</div>`,
+      (speaker) => `<div class="timeline-speaker" style="--speaker-color:${speakerColor(speaker)}"><span>${speakerName(speaker)}</span></div>`,
     )
     .join("");
   elements.timelineTracks.innerHTML = `${speakers
@@ -421,14 +473,21 @@ function startElapsedTimer() {
 }
 
 async function transcribe() {
+  if (state.isTranscribing || !state.audioFile) return;
   const apiKey = elements.apiKey.value.trim();
-  if (!state.audioFile || !apiKey) {
-    elements.formError.textContent = "Vui lòng nhập API key và chọn một file audio.";
+  if (!apiKey) {
+    elements.formError.textContent = "Nhập API key để hệ thống tự động xử lý file vừa chọn.";
     return;
   }
 
+  const audioFile = state.audioFile;
+  const audioUrl = state.audioUrl;
+  state.isTranscribing = true;
+  elements.dropZone.disabled = true;
+  elements.removeFile.disabled = true;
   elements.formError.textContent = "";
-  elements.transcribeButton.disabled = true;
+  elements.processingDetail.textContent = "Đang tải audio lên";
+  elements.elapsedTime.textContent = "00:00";
   setResultView("processing");
   startElapsedTimer();
 
@@ -436,31 +495,46 @@ async function transcribe() {
     const response = await fetch("/api/transcribe", {
       method: "POST",
       headers: {
-        "Content-Type": state.audioFile.type || "application/octet-stream",
+        "Content-Type": audioFile.type || "application/octet-stream",
         "X-Api-Key": apiKey,
-        "X-File-Name": encodeURIComponent(state.audioFile.name),
+        "X-File-Name": encodeURIComponent(audioFile.name),
         "X-Language-Code": elements.language.value,
         "X-Model-Id": elements.model.value,
       },
-      body: state.audioFile,
+      body: audioFile,
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Không thể xử lý file audio.");
 
     clearInterval(state.elapsedTimer);
     renderTranscript(result);
-    elements.resultTitle.textContent = state.audioFile.name.replace(/\.[^.]+$/, "");
-    elements.audio.src = state.audioUrl;
+    elements.resultTitle.textContent = audioFile.name.replace(/\.[^.]+$/, "");
+    elements.audio.src = audioUrl;
     setResultView("transcript");
     requestAnimationFrame(drawWaveform);
-    loadRecordings();
+    clearPendingFile();
+    await loadRecordings();
   } catch (error) {
     clearInterval(state.elapsedTimer);
     elements.formError.textContent = error instanceof Error ? error.message : "Đã có lỗi xảy ra.";
     setResultView("empty");
   } finally {
-    updateSubmitState();
+    state.isTranscribing = false;
+    elements.dropZone.disabled = false;
+    elements.removeFile.disabled = false;
   }
+}
+
+function centerSegment(segmentElement) {
+  if (!segmentElement) return;
+  const containerBounds = elements.transcriptList.getBoundingClientRect();
+  const segmentBounds = segmentElement.getBoundingClientRect();
+  const centeredTop =
+    elements.transcriptList.scrollTop +
+    segmentBounds.top -
+    containerBounds.top -
+    (containerBounds.height - segmentBounds.height) / 2;
+  elements.transcriptList.scrollTo({ top: Math.max(0, centeredTop), behavior: "smooth" });
 }
 
 function updateActiveWord() {
@@ -482,19 +556,23 @@ function updateActiveWord() {
   if (nextIndex >= 0 && time > state.words[nextIndex].end + 0.25) nextIndex = -1;
   if (nextIndex === state.activeWordIndex) return;
 
-  document.querySelector(".word.is-active")?.classList.remove("is-active");
+  document.querySelectorAll(".word.is-active").forEach((word) => word.classList.remove("is-active"));
   document.querySelector(".segment.is-active")?.classList.remove("is-active");
   state.activeWordIndex = nextIndex;
-  if (nextIndex < 0) return;
+  if (nextIndex < 0) {
+    state.activeSegmentIndex = -1;
+    return;
+  }
 
-  const wordElement = document.querySelector(`[data-word-index="${nextIndex}"]`);
+  const wordElements = [...document.querySelectorAll(`[data-word-index="${nextIndex}"]`)];
   const segmentIndex = state.segments.findIndex((segment) => segment.words.some((word) => word.index === nextIndex));
-  const segmentElement = wordElement?.closest(".segment") || document.querySelector(`[data-segment-index="${segmentIndex}"]`);
-  wordElement?.classList.add("is-active");
+  const segmentElement = wordElements[0]?.closest(".segment") || document.querySelector(`[data-segment-index="${segmentIndex}"]`);
+  wordElements.forEach((word) => word.classList.add("is-active"));
   segmentElement?.classList.add("is-active");
 
-  if (!elements.audio.paused && nextIndex % 8 === 0) {
-    segmentElement?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (!elements.audio.paused && segmentIndex !== state.activeSegmentIndex) {
+    state.activeSegmentIndex = segmentIndex;
+    centerSegment(segmentElement);
   }
 }
 
@@ -525,8 +603,11 @@ function transcriptAsSrt() {
 }
 
 elements.apiKey.addEventListener("input", () => {
-  updateSubmitState();
   if (elements.rememberKey.checked) localStorage.setItem("elevenlabs-api-key", elements.apiKey.value);
+  clearTimeout(state.autoTranscribeTimer);
+  if (state.audioFile && elements.apiKey.value.trim()) {
+    state.autoTranscribeTimer = setTimeout(() => void transcribe(), 700);
+  }
 });
 elements.rememberKey.addEventListener("change", () => {
   if (elements.rememberKey.checked) localStorage.setItem("elevenlabs-api-key", elements.apiKey.value);
@@ -540,17 +621,11 @@ elements.toggleKey.addEventListener("click", () => {
 elements.dropZone.addEventListener("click", () => elements.fileInput.click());
 elements.fileInput.addEventListener("change", () => setAudioFile(elements.fileInput.files?.[0]));
 elements.removeFile.addEventListener("click", clearAudioFile);
-elements.transcribeButton.addEventListener("click", transcribe);
 elements.refreshLibrary.addEventListener("click", loadRecordings);
 elements.audioLibraryList.addEventListener("click", (event) => {
   const item = event.target.closest("[data-recording-id]");
   if (item) openRecording(item.dataset.recordingId);
 });
-elements.newAudioButton.addEventListener("click", () => {
-  clearAudioFile();
-  window.scrollTo({ top: 0, behavior: "smooth" });
-});
-
 for (const eventName of ["dragenter", "dragover"]) {
   elements.dropZone.addEventListener(eventName, (event) => {
     event.preventDefault();
@@ -569,7 +644,11 @@ elements.playButton.addEventListener("click", () => {
   if (elements.audio.paused) elements.audio.play();
   else elements.audio.pause();
 });
-elements.audio.addEventListener("play", () => elements.playButton.classList.add("is-playing"));
+elements.audio.addEventListener("play", () => {
+  elements.playButton.classList.add("is-playing");
+  const activeSegment = document.querySelector(`[data-segment-index="${state.activeSegmentIndex}"]`);
+  centerSegment(activeSegment);
+});
 elements.audio.addEventListener("pause", () => elements.playButton.classList.remove("is-playing"));
 elements.audio.addEventListener("ended", () => elements.playButton.classList.remove("is-playing"));
 elements.audio.addEventListener("loadedmetadata", () => {
@@ -630,7 +709,6 @@ if (savedApiKey) {
   elements.apiKey.value = savedApiKey;
   elements.rememberKey.checked = true;
 }
-updateSubmitState();
 loadRecordings();
 
 async function loadJapaneseDemo() {
@@ -642,7 +720,10 @@ async function loadJapaneseDemo() {
     { text: "どれ？", start: 14.22, end: 15.52, speaker_id: "speaker_0", type: "word" },
     { text: "あそこ。あの黒い傘。", start: 17.02, end: 20.1, speaker_id: "speaker_1", type: "word" },
   ];
-  const sentences = demoWords.map((word, id) => ({ id, text: word.text }));
+  const sentences = groupSegments(normalizeWords({ words: demoWords })).map((segment, id) => ({
+    id,
+    text: segment.words.map((word) => word.text).join("").trim(),
+  }));
   const response = await fetch("/api/japanese/analyze", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
