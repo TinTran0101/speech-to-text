@@ -1,4 +1,5 @@
 import { initTextToSpeech } from "./tts.js";
+import { isTextToSpeechRecording } from "./recording-type.js";
 
 const elements = {
   apiKey: document.querySelector("#api-key"),
@@ -138,7 +139,9 @@ async function loadRecordings() {
       return;
     }
 
-    const recordings = Array.isArray(result.recordings) ? result.recordings : [];
+    const recordings = (Array.isArray(result.recordings) ? result.recordings : []).filter(
+      (recording) => !isTextToSpeechRecording(recording),
+    );
     elements.libraryStatus.textContent = recordings.length
       ? `${recordings.length} audio đã lưu`
       : "Chưa có audio nào được lưu.";
