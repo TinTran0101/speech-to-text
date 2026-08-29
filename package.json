@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.112.4",
+    "google-translate-api-x": "^10.7.3",
     "kuromoji": "^0.1.2",
     "wanakana": "^5.3.1"
   }

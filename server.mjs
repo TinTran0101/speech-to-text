@@ -10,6 +10,7 @@ import {
   listRecordings,
   saveRecording,
   storageStatus,
+  updateRecordingTranscript,
   verifyStorageConnection,
 } from "./src/storage.mjs";
 
@@ -108,12 +109,21 @@ async function enrichJapanese(result, languageCode) {
   const segments = transcriptSegments(result);
   const japanese =
     languageCode === "ja" || result.language_code === "ja" || segments.some((item) => looksJapanese(item.text));
-  if (!japanese || !segments.length) return result;
+  if (!japanese || !segments.length) return false;
+
+  const existingSentences = Array.isArray(result.japanese?.sentences) ? result.japanese.sentences : [];
+  const translationsComplete =
+    existingSentences.length === segments.length &&
+    existingSentences.every((sentence) => !String(sentence.text || "").trim() || String(sentence.translationVi || "").trim());
+  if (translationsComplete) {
+    result.japanese.translationEnabled = true;
+    return false;
+  }
 
   result.japanese = await analyzeJapaneseSentences(
     segments.map((segment) => ({ id: segment.id, text: segment.text })),
   );
-  return result;
+  return result.japanese.sentences.some((sentence) => sentence.translationVi);
 }
 
 async function handleTranscription(request, response) {
@@ -144,11 +154,16 @@ async function handleTranscription(request, response) {
     const contentType = request.headers["content-type"] || "application/octet-stream";
     const fileHash = hashAudio(audioBuffer);
     const cacheKey = hashAudio(
-      Buffer.from(`${fileHash}:${modelId}:${languageCode || "auto"}:kanji-v1:${Boolean(process.env.LIBRETRANSLATE_URL)}`),
+      Buffer.from(`${fileHash}:${modelId}:${languageCode || "auto"}:kanji-google-v2`),
     );
     const cached = await findCachedRecording(cacheKey);
 
     if (cached?.transcript_json) {
+      const translationAdded = await enrichJapanese(
+        cached.transcript_json,
+        cached.transcript_json.language_code || languageCode,
+      );
+      if (translationAdded) await updateRecordingTranscript(cached.id, cached.transcript_json);
       sendJson(response, 200, {
         ...cached.transcript_json,
         cache: { hit: true, recordingId: cached.id },
@@ -250,6 +265,8 @@ async function handleRecordingDetail(recordingId, response) {
       sendJson(response, 404, { error: "Khong tim thay ban ghi." });
       return;
     }
+    const translationAdded = await enrichJapanese(recording.transcript, recording.languageCode);
+    if (translationAdded) await updateRecordingTranscript(recording.id, recording.transcript);
     sendJson(response, 200, { recording });
   } catch (error) {
     sendJson(response, 500, { error: error instanceof Error ? error.message : "Khong the tai ban ghi." });
@@ -293,7 +310,7 @@ const server = createServer(async (request, response) => {
         ...storage,
         health: storage.configured ? await verifyStorageConnection() : null,
       },
-      japanese: { engine: "kuromoji + wanakana", translation: process.env.LIBRETRANSLATE_URL ? "libretranslate" : null },
+      japanese: { engine: "kuromoji + wanakana", translation: "google-translate-api-x" },
     });
     return;
   }

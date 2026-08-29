@@ -99,6 +99,16 @@ export async function getRecording(recordingId) {
   };
 }
 
+export async function updateRecordingTranscript(recordingId, transcript) {
+  if (!supabase) return false;
+  const { error } = await supabase.from("recordings").update({ transcript_json: transcript }).eq("id", recordingId);
+  if (error) {
+    console.warn("Khong the cap nhat ban dich transcript:", error.message);
+    return false;
+  }
+  return true;
+}
+
 export async function saveRecording({
   audioBuffer,
   contentType,

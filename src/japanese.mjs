@@ -1,8 +1,11 @@
+import translate from "google-translate-api-x";
 import kuromoji from "kuromoji";
 import { toHiragana, toRomaji } from "wanakana";
 import { fileURLToPath } from "node:url";
 
 const dictionaryPath = fileURLToPath(new URL("../node_modules/kuromoji/dict", import.meta.url));
+const translationProvider = "google-translate-api-x";
+const maxTranslationBatchCharacters = 4500;
 let tokenizerPromise;
 
 function getTokenizer() {
@@ -65,30 +68,65 @@ function groupIntoPhrases(tokens) {
   return phrases;
 }
 
-async function translateWithLibreTranslate(text) {
-  const baseUrl = process.env.LIBRETRANSLATE_URL;
-  if (!baseUrl || !text.trim()) return null;
+function createTranslationBatches(analyses) {
+  const batches = [];
+  let current = [];
+  let currentLength = 0;
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/translate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      q: text,
-      source: "ja",
-      target: "vi",
-      format: "text",
-      ...(process.env.LIBRETRANSLATE_API_KEY
-        ? { api_key: process.env.LIBRETRANSLATE_API_KEY }
-        : {}),
-    }),
-  });
+  for (const [index, analysis] of analyses.entries()) {
+    const text = analysis.text.trim();
+    if (!text) continue;
+    if (current.length && currentLength + text.length > maxTranslationBatchCharacters) {
+      batches.push(current);
+      current = [];
+      currentLength = 0;
+    }
+    current.push({ index, text });
+    currentLength += text.length;
+  }
 
-  if (!response.ok) throw new Error(`LibreTranslate HTTP ${response.status}`);
-  const result = await response.json();
-  return result.translatedText || null;
+  if (current.length) batches.push(current);
+  return batches;
 }
 
-export async function analyzeJapaneseSentences(sentences, { translate = true } = {}) {
+async function translateBatch(batch, translator, client = "t") {
+  const results = await translator(
+    batch.map((item) => item.text),
+    {
+      from: "ja",
+      to: "vi",
+      client,
+      forceBatch: true,
+      rejectOnPartialFail: false,
+      requestOptions: { signal: AbortSignal.timeout(20_000) },
+    },
+  );
+  return Array.isArray(results) ? results : [results];
+}
+
+async function translateAnalyses(analyses, translator) {
+  for (const batch of createTranslationBatches(analyses)) {
+    let translations;
+    try {
+      translations = await translateBatch(batch, translator);
+    } catch {
+      translations = await translateBatch(batch, translator, "gtx");
+    }
+
+    translations.forEach((translation, batchIndex) => {
+      const analysis = analyses[batch[batchIndex]?.index];
+      const translatedText = translation?.text?.trim();
+      if (!analysis || !translatedText) return;
+      analysis.translationVi = translatedText;
+      analysis.translationProvider = translationProvider;
+    });
+  }
+}
+
+export async function analyzeJapaneseSentences(
+  sentences,
+  { translate: shouldTranslate = true, translator = translate } = {},
+) {
   const tokenizer = await getTokenizer();
   const analyses = [];
 
@@ -102,20 +140,21 @@ export async function analyzeJapaneseSentences(sentences, { translate = true } =
       translationProvider: null,
     };
 
-    if (translate && process.env.LIBRETRANSLATE_URL) {
-      try {
-        analysis.translationVi = await translateWithLibreTranslate(text);
-        analysis.translationProvider = "libretranslate";
-      } catch (error) {
-        console.warn("Khong the dich cau tieng Nhat:", error.message);
-      }
-    }
     analyses.push(analysis);
+  }
+
+  if (shouldTranslate) {
+    try {
+      await translateAnalyses(analyses, translator);
+    } catch (error) {
+      console.warn("Khong the dich cau tieng Nhat bang Google Translate:", error.message);
+    }
   }
 
   return {
     engine: "kuromoji + wanakana",
-    translationEnabled: Boolean(process.env.LIBRETRANSLATE_URL),
+    translationEnabled: shouldTranslate,
+    translationProvider: shouldTranslate ? translationProvider : null,
     sentences: analyses,
   };
 }

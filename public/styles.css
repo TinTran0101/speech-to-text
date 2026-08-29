@@ -366,7 +366,7 @@ body.editor-mode .result-panel { min-height: calc(100vh - 66px); background: #f7
 .show-romaji .romaji { display: block; }
 .hide-reading ruby rt { visibility: hidden; }
 .translation-line { margin: 8px 0 0; padding-left: 12px; color: #41685b; border-left: 2px solid #9bcdbb; font-size: 13px; line-height: 1.55; outline: none; }
-.translation-line:focus { background: #f1faf6; }
+.translation-line strong { margin-right: 8px; color: #287253; font-size: 9px; letter-spacing: 0.08em; }
 .translation-line.is-placeholder { color: #9aa09e; font-style: italic; }
 .hide-translation .translation-line { display: none; }
 
@@ -824,4 +824,8 @@ body.editor-mode .transcript-state {
   .segment-text {
     font-size: 15px;
   }
+}
+
+.editor-body {
+  grid-template-columns: minmax(0, 1fr);
 }

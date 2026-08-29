@@ -28,7 +28,6 @@ const elements = {
   resultTitle: document.querySelector("#result-title"),
   search: document.querySelector("#search-transcript"),
   selectedFile: document.querySelector("#selected-file"),
-  speakerLegend: document.querySelector("#speaker-legend"),
   japaneseStatus: document.querySelector("#japanese-status"),
   timelineRuler: document.querySelector("#timeline-ruler"),
   timelineSpeakers: document.querySelector("#timeline-speakers"),
@@ -211,7 +210,6 @@ function resetTranscript() {
   state.transcript = null;
   state.words = [];
   elements.search.value = "";
-  elements.speakerLegend.innerHTML = "";
   elements.transcriptList.innerHTML = "";
   setResultView("empty");
 }
@@ -315,21 +313,7 @@ function renderTranscript(result) {
   state.transcript = result;
   state.words = normalizeWords(result);
   state.segments = groupSegments(state.words);
-  const speakers = [...new Set(state.segments.map((segment) => segment.speaker))];
-
-  elements.speakerLegend.innerHTML = speakers
-    .map(
-      (speaker) => `
-        <button class="speaker-chip" type="button" style="--speaker-color:${speakerColor(speaker)}">
-          <i>${speakerName(speaker).replace("Người nói ", "")}</i>
-          <span>${speakerName(speaker)}</span>
-          <b>•••</b>
-        </button>`,
-    )
-    .join("");
-
   if (!state.segments.length) {
-    elements.speakerLegend.innerHTML = "";
     elements.transcriptList.innerHTML = `<p class="fallback-text">${escapeHtml(result.text || "Không có nội dung được nhận diện.")}</p>`;
     return;
   }
@@ -356,7 +340,7 @@ function renderTranscript(result) {
         ? `<div class="japanese-line">${phraseMarkup || escapeHtml(originalText)}</div>`
         : `<p class="segment-text">${wordMarkup}</p>`;
       const translationMarkup = japanese
-        ? `<p class="translation-line ${japanese.translationVi ? "" : "is-placeholder"}" contenteditable="true" spellcheck="false">${escapeHtml(japanese.translationVi || "Thêm nghĩa tiếng Việt · cấu hình LibreTranslate để dịch tự động")}</p>`
+        ? `<p class="translation-line ${japanese.translationVi ? "" : "is-placeholder"}"><strong>VI</strong><span>${escapeHtml(japanese.translationVi || "Chưa thể dịch tự động. Hãy thử mở lại bản ghi.")}</span></p>`
         : "";
       return `
         <article class="segment" data-segment-index="${segmentIndex}" style="--speaker-color:${speakerColor(segment.speaker)}">
@@ -382,10 +366,11 @@ function renderTranscript(result) {
     : result.cache?.saved
       ? "Đã lưu Supabase"
       : "Chưa bật cloud cache";
+  const translatedSentenceCount = result.japanese?.sentences?.filter((sentence) => sentence.translationVi).length || 0;
   elements.japaneseStatus.textContent = result.japanese
-    ? result.japanese.translationEnabled
-      ? "Kanji + dịch Việt"
-      : "Kanji reading ready"
+    ? translatedSentenceCount
+      ? `Google dịch ${translatedSentenceCount}/${result.japanese.sentences.length} câu`
+      : "Kanji · chưa có bản dịch"
     : "Transcript timeline";
   renderTimeline();
 }

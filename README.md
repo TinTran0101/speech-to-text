@@ -34,14 +34,9 @@ Mo `http://127.0.0.1:4173`, nhap ElevenLabs API key va chon file audio.
 
 `kuromoji` tach tu/cum va tra ve cach doc Katakana. `wanakana` chuyen cach doc sang Hiragana va Romaji. Hai buoc nay chay trong Node.js, khong can API va khong phat sinh chi phi.
 
-De dich tung cau sang tieng Viet, app ho tro mot LibreTranslate server tu host:
+Moi cau tieng Nhat duoc dich tu dong sang tieng Viet bang `google-translate-api-x` va hien ngay ben duoi cau goc. App gui nhieu cau trong mot batch de giam so request, sau do luu ban dich trong transcript cache tren Supabase.
 
-```text
-LIBRETRANSLATE_URL=https://translate.example.com
-LIBRETRANSLATE_API_KEY=
-```
-
-LibreTranslate la ma nguon mo. Chat luong dich Nhat-Viet phu thuoc model cua instance; neu can chat luong cao hon, co the thay adapter bang Gemini/DeepL nhung van giu nguyen lop cache.
+Thu vien nay dung endpoint Google Translate khong chinh thuc va khong can API key. Google co the rate-limit hoac thay doi endpoint; khi dich tam thoi that bai, mo lai ban ghi de app thu lai.
 
 ## Supabase cache
 
